@@ -179,7 +179,14 @@ namespace
                         winrt::Windows::UI::Xaml::FrameworkElement>();
                 if (RootElement)
                 {
-                    RootElement.RequestedTheme(Theme);
+                    // FrameworkElement.RequestedTheme takes ElementTheme
+                    // which cannot be implicitly converted from
+                    // ApplicationTheme.
+                    RootElement.RequestedTheme(
+                        (winrt::Windows::UI::Xaml::ApplicationTheme::Dark
+                            == Theme)
+                        ? winrt::Windows::UI::Xaml::ElementTheme::Dark
+                        : winrt::Windows::UI::Xaml::ElementTheme::Light);
                 }
             }
         }
