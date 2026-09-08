@@ -23,8 +23,47 @@ jobs:
     - uses: microsoft/setup-msbuild@v3
     - name: Clear local NuGet cache (workaround for failed restores on windows-latest)
       run: dotnet nuget locals all --clear
+    - name: Create self-signed test certificate
+      shell: pwsh
+      run: |
+        $cert = New-SelfSignedCertificate -Type CodeSigningCert `
+          -Subject "CN=E310A153-74A9-4D81-800B-857A8D58408A" `
+          -HashAlgorithm SHA256 -KeyExportPolicy Exportable -KeySpec Signature -KeyLength 2048 `
+          -CertStoreLocation Cert:\CurrentUser\My `
+          -Provider "Microsoft Enhanced RSA and AES Cryptographic Provider" `
+          -NotAfter (Get-Date).AddYears(3)
+        $pwd = ConvertTo-SecureString 'nanazip' -AsPlainText -Force
+        Export-PfxCertificate -Cert $cert -FilePath "$env:RUNNER_TEMP\nanazip_test.pfx" -Password $pwd | Out-Null
+        Export-Certificate -Cert $cert -FilePath "$env:RUNNER_TEMP\nanazip_test.cer" | Out-Null
+        "NANAZIP_PFX=$env:RUNNER_TEMP\nanazip_test.pfx" | Out-File -FilePath $env:GITHUB_ENV -Append
+        "NANAZIP_CER=$env:RUNNER_TEMP\nanazip_test.cer" | Out-File -FilePath $env:GITHUB_ENV -Append
     - name: Build
       run: MSBuild -binaryLogger:Output\BuildAllTargets.binlog -m BuildAllTargets.proj
+    - name: Sign MSIX packages with self-signed test certificate
+      shell: pwsh
+      run: |
+        $kits = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+        $signtool = Get-ChildItem -LiteralPath $kits -Recurse -Filter signtool.exe -File -ErrorAction SilentlyContinue |
+          Where-Object { $_.FullName -match '\\x64\\' } |
+          Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
+        if (-not $signtool) { throw "signtool.exe not found under $kits" }
+        Write-Host "Using signtool: $signtool"
+        $targets = Get-ChildItem -LiteralPath "Output/Binaries/AppPackages" -Recurse -File -ErrorAction SilentlyContinue |
+          Where-Object { $_.Extension -in '.msix','.msixbundle','.appx','.appxbundle' }
+        foreach ($t in $targets) {
+          Write-Host "Signing $($t.FullName)"
+          & $signtool sign /f $env:NANAZIP_PFX /p nanazip /fd SHA256 "$($t.FullName)"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to sign $($t.FullName)" }
+        }
+    - name: Stage signing certificate for download
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path "Output/Binaries/AppPackages" | Out-Null
+        Copy-Item -LiteralPath $env:NANAZIP_CER -Destination "Output/Binaries/AppPackages/nanazip_test.cer" -Force
+        Get-ChildItem -Path "Output/Binaries/AppPackages" -Directory -Filter "*_Test" -ErrorAction SilentlyContinue |
+          ForEach-Object {
+            Copy-Item -LiteralPath $env:NANAZIP_CER -Destination (Join-Path $_.FullName 'nanazip_test.cer') -Force
+          }
     - name: Upload MSIX Bundle
       uses: actions/upload-artifact@v7
       with:
