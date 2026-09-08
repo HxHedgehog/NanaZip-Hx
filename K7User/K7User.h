@@ -26,6 +26,15 @@
  */
 EXTERN_C MO_RESULT MOAPI K7UserInitializeDarkModeSupport();
 
+/**
+ * @brief Re-evaluates the dark mode state from the current system color policy
+ *        and the NanaZip "Invert Theme" setting, then re-applies it to the
+ *        windows of the current thread. Used to apply a live theme toggle.
+ * @return If the function succeeds, it returns MO_RESULT_SUCCESS_OK. Otherwise,
+ *         it returns an MO_RESULT error code.
+ */
+EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme();
+
 #endif // !K7_USER_DARK_MODE
 
 #ifndef K7_USER_MODERN

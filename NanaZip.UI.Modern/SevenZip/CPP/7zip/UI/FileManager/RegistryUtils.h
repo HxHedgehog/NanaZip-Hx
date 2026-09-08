@@ -30,6 +30,7 @@ struct CFmSettings
   bool CopyHistory;
   bool FolderHistory;
   bool LowercaseHashes;
+  bool InvertTheme;
   // bool Underline;
 
   bool ShowSystemMenu;
@@ -49,6 +50,7 @@ bool WantPathHistory();
 bool WantCopyHistory();
 bool WantFolderHistory();
 bool WantLowercaseHashes();
+bool WantInvertTheme();
 
 void SaveFlatView(UInt32 panelIndex, bool enable);
 bool ReadFlatView(UInt32 panelIndex);

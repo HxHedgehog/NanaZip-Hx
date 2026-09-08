@@ -50,6 +50,46 @@ namespace
     const COLORREF g_DarkModeBorderColor = RGB(127, 127, 127);
     const COLORREF g_DarkModeMenuSelectedBackgroundColor = RGB(65, 65, 65);
 
+    static bool K7UserReadThemeInvert()
+    {
+        // The "Invert Theme" option is exposed by the File Manager settings and
+        // is stored as a REG_DWORD under HKCU\Software\NanaZip\FM\InvertTheme.
+        DWORD Value = 0;
+        DWORD ValueSize = sizeof(Value);
+
+        HKEY KeyHandle = nullptr;
+        if (ERROR_SUCCESS == ::RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            L"Software\\NanaZip\\FM",
+            0,
+            KEY_READ,
+            &KeyHandle))
+        {
+            if (ERROR_SUCCESS != ::RegQueryValueExW(
+                KeyHandle,
+                L"InvertTheme",
+                nullptr,
+                nullptr,
+                reinterpret_cast<LPBYTE>(&Value),
+                &ValueSize))
+            {
+                Value = 0;
+            }
+            ::RegCloseKey(KeyHandle);
+        }
+
+        return (Value != 0);
+    }
+
+    static bool ComputeShouldAppsUseDarkMode()
+    {
+        const bool BaseShouldUseDarkMode =
+            ::MileShouldAppsUseDarkMode() &&
+            !::MileShouldAppsUseHighContrastMode();
+        return ::K7UserReadThemeInvert() ?
+            !BaseShouldUseDarkMode : BaseShouldUseDarkMode;
+    }
+
     static HBRUSH GetDarkModeBackgroundBrush()
     {
         static HBRUSH CachedResult =
@@ -179,8 +219,7 @@ namespace
             // support won't be enabled before the thread context is fully
             // initialized to reduce the possibility of unintended behaviors.
             this->ShouldAppsUseDarkMode =
-                ::MileShouldAppsUseDarkMode() &&
-                !::MileShouldAppsUseHighContrastMode();
+                ::ComputeShouldAppsUseDarkMode();
         }
 
         ~ThreadContext()
@@ -392,8 +431,7 @@ namespace
                 ::MileRefreshImmersiveColorPolicyState();
 
                 g_ThreadContext.ShouldAppsUseDarkMode =
-                    ::MileShouldAppsUseDarkMode() &&
-                    !::MileShouldAppsUseHighContrastMode();
+                    ::ComputeShouldAppsUseDarkMode();
 
                 ::MileEnableImmersiveDarkModeForWindow(
                     hWnd,
@@ -1422,6 +1460,68 @@ namespace
             g_FunctionTable[i].Detoured = nullptr;
         }
     }
+}
+
+EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme()
+{
+    if (!g_GlobalInitialized)
+    {
+        return MO_RESULT_SUCCESS_OK;
+    }
+
+    g_ThreadContext.ShouldAppsUseDarkMode =
+        ::ComputeShouldAppsUseDarkMode();
+
+    ::EnumThreadWindows(
+        ::GetCurrentThreadId(),
+        [](
+            _In_ HWND hWnd,
+            _In_ LPARAM lParam) -> BOOL
+    {
+        UNREFERENCED_PARAMETER(lParam);
+
+        ::MileEnableImmersiveDarkModeForWindow(
+            hWnd,
+            g_ThreadContext.ShouldAppsUseDarkMode);
+
+        bool ShouldExtendFrame = (
+            g_ThreadContext.ShouldAppsUseDarkMode &&
+            ::IsStandardDynamicRangeMode() &&
+            g_ThreadContext.MicaBackdropAvailable);
+
+        MARGINS Margins = {};
+        if (ShouldExtendFrame)
+        {
+            Margins = { -1 };
+        }
+        else if (::IsFileManagerWindow(hWnd))
+        {
+            UINT DpiValue = ::GetDpiForWindow(hWnd);
+            Margins.cyTopHeight =
+                ::MulDiv(84, DpiValue, USER_DEFAULT_SCREEN_DPI);
+            Margins.cyBottomHeight =
+                ::MulDiv(32, DpiValue, USER_DEFAULT_SCREEN_DPI);
+        }
+        ::DwmExtendFrameIntoClientArea(hWnd, &Margins);
+
+        ::EnumChildWindows(
+            hWnd,
+            [](
+                _In_ HWND hWnd,
+                _In_ LPARAM lParam) -> BOOL
+        {
+            UNREFERENCED_PARAMETER(lParam);
+            ::RefreshWindowTheme(hWnd);
+            return TRUE;
+        },
+            0);
+
+        ::InvalidateRect(hWnd, nullptr, TRUE);
+        return TRUE;
+    },
+        0);
+
+    return MO_RESULT_SUCCESS_OK;
 }
 
 EXTERN_C MO_RESULT MOAPI K7UserInitializeDarkModeSupport()
