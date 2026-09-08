@@ -90,6 +90,26 @@ namespace
             !BaseShouldUseDarkMode : BaseShouldUseDarkMode;
     }
 
+    static void ApplyProcessThemePolicy(
+        _In_ bool ShouldUseDarkMode)
+    {
+        // The process-wide uxtheme color mode must follow the possibly
+        // inverted theme state instead of always following the system
+        // setting. With the inverted theme enabled, AUTO would keep
+        // rendering theme-drawn controls (list view items, headers, buttons)
+        // with the system light mode styles while the non-theme rendering
+        // paths (DWM attributes, background erasing, control color messages)
+        // already use the inverted colors, resulting in unreadable
+        // light-on-light or dark-on-dark content. For the non-inverted cases
+        // DARK/DEFAULT produce the same results as AUTO because
+        // ShouldUseDarkMode is derived from the system setting there.
+        ::MileSetPreferredAppMode(
+            ShouldUseDarkMode
+                ? MILE_PREFERRED_APP_MODE_DARK
+                : MILE_PREFERRED_APP_MODE_DEFAULT);
+        ::MileRefreshImmersiveColorPolicyState();
+    }
+
     static HBRUSH GetDarkModeBackgroundBrush()
     {
         static HBRUSH CachedResult =
@@ -433,6 +453,9 @@ namespace
 
                 g_ThreadContext.ShouldAppsUseDarkMode =
                     ::ComputeShouldAppsUseDarkMode();
+
+                ::ApplyProcessThemePolicy(
+                    g_ThreadContext.ShouldAppsUseDarkMode);
 
                 ::MileEnableImmersiveDarkModeForWindow(
                     hWnd,
@@ -1473,6 +1496,8 @@ EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme()
     g_ThreadContext.ShouldAppsUseDarkMode =
         ::ComputeShouldAppsUseDarkMode();
 
+    ::ApplyProcessThemePolicy(g_ThreadContext.ShouldAppsUseDarkMode);
+
     ::EnumThreadWindows(
         ::GetCurrentThreadId(),
         [](
@@ -1544,8 +1569,7 @@ EXTERN_C MO_RESULT MOAPI K7UserInitializeDarkModeSupport()
         return MO_RESULT_ERROR_FAIL;
     }
 
-    ::MileAllowDarkModeForApp(TRUE);
-    ::MileRefreshImmersiveColorPolicyState();
+    ::ApplyProcessThemePolicy(::ComputeShouldAppsUseDarkMode());
 
     ::K7BaseDetourTransactionBegin();
     ::K7BaseDetourUpdateThread(::GetCurrentThread());

@@ -155,14 +155,84 @@ namespace
             winrt::Windows::UI::Xaml::ApplicationTheme::Light;
     }
 
+    static void K7ModernApplyXamlWindowTheme(
+        _In_ HWND WindowHandle,
+        _In_ winrt::Windows::UI::Xaml::ApplicationTheme Theme)
+    {
+        winrt::Windows::UI::Xaml::Hosting::DesktopWindowXamlSource XamlSource =
+            nullptr;
+        winrt::copy_from_abi(
+            XamlSource,
+            ::GetPropW(WindowHandle, L"XamlWindowSource"));
+        if (!XamlSource)
+        {
+            return;
+        }
+
+        try
+        {
+            auto Content = XamlSource.Content();
+            if (Content)
+            {
+                winrt::Windows::UI::Xaml::FrameworkElement RootElement =
+                    Content.try_as<
+                        winrt::Windows::UI::Xaml::FrameworkElement>();
+                if (RootElement)
+                {
+                    RootElement.RequestedTheme(Theme);
+                }
+            }
+        }
+        catch (...)
+        {
+            // Ignore windows whose XAML content is not ready yet.
+        }
+    }
+
     static void K7ModernApplyTheme()
     {
         if (!g_AppInstance)
         {
             return;
         }
+        const winrt::Windows::UI::Xaml::ApplicationTheme Theme =
+            ::K7ModernComputeTheme();
         winrt::Windows::UI::Xaml::Application::Current().RequestedTheme(
-            ::K7ModernComputeTheme());
+            Theme);
+
+        // XAML Islands do not refresh already loaded DesktopWindowXamlSource
+        // contents when Application.RequestedTheme changes at runtime, so
+        // the root element theme of every hosted XAML window has to be
+        // updated directly.
+        ::EnumThreadWindows(
+            ::GetCurrentThreadId(),
+            [](
+                _In_ HWND hWnd,
+                _In_ LPARAM lParam) -> BOOL
+        {
+            auto Theme = reinterpret_cast<
+                winrt::Windows::UI::Xaml::ApplicationTheme*>(lParam);
+
+            ::K7ModernApplyXamlWindowTheme(hWnd, *Theme);
+
+            ::EnumChildWindows(
+                hWnd,
+                [](
+                    _In_ HWND hWnd,
+                    _In_ LPARAM lParam) -> BOOL
+            {
+                auto Theme = reinterpret_cast<
+                    winrt::Windows::UI::Xaml::ApplicationTheme*>(lParam);
+
+                ::K7ModernApplyXamlWindowTheme(hWnd, *Theme);
+
+                return TRUE;
+            },
+                lParam);
+
+            return TRUE;
+        },
+            reinterpret_cast<LPARAM>(&Theme));
     }
 }
 
