@@ -26,6 +26,7 @@
 
 #include <winrt/Windows.ApplicationModel.Resources.Core.h>
 #include <winrt/Windows.UI.Xaml.Hosting.h>
+#include <winrt/Windows.UI.Xaml.h>
 
 #include <mutex>
 #include <map>
@@ -106,6 +107,65 @@ namespace
     static winrt::NanaZip::Modern::App g_AppInstance = nullptr;
 }
 
+namespace
+{
+    static bool K7ModernReadThemeInvert()
+    {
+        // The "Invert Theme" option is exposed by the File Manager settings and
+        // is stored as a REG_DWORD under HKCU\Software\NanaZip\FM\InvertTheme.
+        DWORD Value = 0;
+        DWORD ValueSize = sizeof(Value);
+
+        HKEY KeyHandle = nullptr;
+        if (ERROR_SUCCESS == ::RegOpenKeyExW(
+            HKEY_CURRENT_USER,
+            L"Software\\NanaZip\\FM",
+            0,
+            KEY_READ,
+            &KeyHandle))
+        {
+            if (ERROR_SUCCESS == ::RegQueryValueExW(
+                KeyHandle,
+                L"InvertTheme",
+                nullptr,
+                nullptr,
+                reinterpret_cast<LPBYTE>(&Value),
+                &ValueSize))
+            {
+                // The value exists, use it as is.
+            }
+            else
+            {
+                Value = 0;
+            }
+            ::RegCloseKey(KeyHandle);
+        }
+
+        return (Value != 0);
+    }
+
+    static winrt::Windows::UI::Xaml::ApplicationTheme K7ModernComputeTheme()
+    {
+        const bool BaseShouldUseDarkMode =
+            ::MileShouldAppsUseDarkMode() &&
+            !::MileShouldAppsUseHighContrastMode();
+        const bool InvertTheme = ::K7ModernReadThemeInvert();
+        return (InvertTheme ? !BaseShouldUseDarkMode : BaseShouldUseDarkMode) ?
+            winrt::Windows::UI::Xaml::ApplicationTheme::Dark :
+            winrt::Windows::UI::Xaml::ApplicationTheme::Light;
+    }
+
+    static void K7ModernApplyTheme()
+    {
+        if (!g_AppInstance)
+        {
+            return;
+        }
+        winrt::Windows::UI::Xaml::Application::Current().RequestedTheme(
+            ::K7ModernComputeTheme());
+    }
+}
+
 EXTERN_C BOOL WINAPI K7ModernAvailable()
 {
     return nullptr != g_AppInstance;
@@ -127,6 +187,7 @@ EXTERN_C HRESULT WINAPI K7ModernInitialize()
         winrt::init_apartment(winrt::apartment_type::single_threaded);
         using Implementation = winrt::NanaZip::Modern::implementation::App;
         g_AppInstance = winrt::make<Implementation>();
+        ::K7ModernApplyTheme();
     }
     catch (...)
     {
@@ -152,6 +213,18 @@ EXTERN_C HRESULT WINAPI K7ModernUninitialize()
         return winrt::to_hresult();
     }
     return S_OK;
+}
+
+EXTERN_C VOID WINAPI K7ModernRefreshTheme()
+{
+    try
+    {
+        ::K7ModernApplyTheme();
+    }
+    catch (...)
+    {
+        // Do nothing.
+    }
 }
 
 namespace winrt

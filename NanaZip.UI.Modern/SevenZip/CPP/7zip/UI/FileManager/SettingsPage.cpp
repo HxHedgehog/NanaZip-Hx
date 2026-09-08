@@ -19,6 +19,7 @@
 
 // **************** NanaZip Modification Start ****************
 #include <K7User.h>
+#include <NanaZip.Modern.h>
 // **************** NanaZip Modification End ****************
 
 using namespace NWindows;
@@ -241,6 +242,7 @@ LONG CSettingsPage::OnApply()
     // **************** NanaZip Modification Start ****************
     // Re-check the dark/light inversion immediately after saving.
     ::K7UserRefreshTheme();
+    ::K7ModernRefreshTheme();
     // **************** NanaZip Modification End ****************
   }
 
