@@ -391,24 +391,25 @@ namespace
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORBTN:
         {
-            if (g_ThreadContext.ShouldAppsUseDarkMode)
+            HDC DeviceContextHandle = reinterpret_cast<HDC>(wParam);
+            if (DeviceContextHandle)
             {
-                HDC DeviceContextHandle = reinterpret_cast<HDC>(wParam);
-                if (DeviceContextHandle)
-                {
-                    ::SetTextColor(
-                        DeviceContextHandle,
-                        g_DarkModeForegroundColor);
-                    ::SetBkColor(
-                        DeviceContextHandle,
-                        g_DarkModeBackgroundColor);
-                }
-
-                return reinterpret_cast<INT_PTR>(
-                    ::GetDarkModeBackgroundBrush());
+                ::SetTextColor(
+                    DeviceContextHandle,
+                    g_ThreadContext.ShouldAppsUseDarkMode ?
+                        g_DarkModeForegroundColor :
+                        g_LightModeForegroundColor);
+                ::SetBkColor(
+                    DeviceContextHandle,
+                    g_ThreadContext.ShouldAppsUseDarkMode ?
+                        g_DarkModeBackgroundColor :
+                        g_LightModeBackgroundColor);
             }
 
-            break;
+            return reinterpret_cast<INT_PTR>(
+                g_ThreadContext.ShouldAppsUseDarkMode ?
+                    ::GetDarkModeBackgroundBrush() :
+                    ::GetStockObject(WHITE_BRUSH));
         }
         default:
             break;
