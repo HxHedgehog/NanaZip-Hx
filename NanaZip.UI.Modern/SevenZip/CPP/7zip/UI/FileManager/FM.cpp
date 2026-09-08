@@ -12,6 +12,7 @@
 #endif
 
 #include "../../../Common/StringConvert.h"
+#include "../../../Common/IntToString.h"
 #include "../../../Common/StringToInt.h"
 
 #include "../../../Windows/ErrorMsg.h"
@@ -739,10 +740,19 @@ void NanaZipInitialize()
         ::ErrorMessage(L"K7BaseDisableDynamicCodeGeneration Failed");
     }
 
-    if (S_OK != ::K7ModernInitialize())
     {
-        ::ErrorMessage(L"K7ModernInitialize Failed");
-        ::ExitProcess(1);
+        HRESULT ModernInitializeResult = ::K7ModernInitialize();
+        if (S_OK != ModernInitializeResult)
+        {
+            char HexBuffer[16];
+            ConvertUInt32ToHex8Digits(
+                static_cast<UInt32>(ModernInitializeResult), HexBuffer);
+            AString ErrorText("K7ModernInitialize Failed (0x");
+            ErrorText += HexBuffer;
+            ErrorText += ')';
+            ::ErrorMessage(ErrorText);
+            ::ExitProcess(1);
+        }
     }
 }
 // **************** NanaZip Modification End ****************

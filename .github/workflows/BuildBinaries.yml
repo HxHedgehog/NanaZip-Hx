@@ -10,6 +10,15 @@ on:
       - 'Documents/**'
       - '**/*.md'
   workflow_dispatch:
+    inputs:
+      artifacts:
+        description: '构建产物范围: full=全部(便携版+符号+扩展包), msix_only=仅 MSIX 包。注意:push 自动按 msix_only 快速构建,需要全量产物请手动触发选 full'
+        required: false
+        default: full
+        type: choice
+        options:
+          - full
+          - msix_only
 
 jobs:
   build:
@@ -38,7 +47,15 @@ jobs:
         "NANAZIP_PFX=$env:RUNNER_TEMP\nanazip_test.pfx" | Out-File -FilePath $env:GITHUB_ENV -Append
         "NANAZIP_CER=$env:RUNNER_TEMP\nanazip_test.cer" | Out-File -FilePath $env:GITHUB_ENV -Append
     - name: Build
-      run: MSBuild -binaryLogger:Output\BuildAllTargets.binlog -m BuildAllTargets.proj
+      shell: pwsh
+      run: |
+        # push 触发时无 inputs(空串),按 msix_only 快速构建;手动触发选 full 才走全量。
+        $msixOnly = ("${{ github.event.inputs.artifacts }}" -ne 'full')
+        if ($msixOnly) {
+          MSBuild -binaryLogger:Output\BuildAllTargets.binlog -m BuildAllTargets.proj /p:NanaZipBuildMsixOnly=true
+        } else {
+          MSBuild -binaryLogger:Output\BuildAllTargets.binlog -m BuildAllTargets.proj
+        }
     - name: Sign MSIX packages with self-signed test certificate
       shell: pwsh
       run: |
@@ -70,6 +87,7 @@ jobs:
         name: NanaZip_Mainline_ApplicationPackages
         path: Output/Binaries/AppPackages
     - name: Upload Extension Package Installer
+      if: github.event.inputs.artifacts == 'full'
       uses: actions/upload-artifact@v7
       with:
         name: NanaZip_Mainline_ExtensionPackageInstaller
@@ -81,11 +99,13 @@ jobs:
         name: NanaZip_Mainline_BuildBinaryLog
         path: Output/BuildAllTargets.binlog
     - name: Upload Portable Binaries
+      if: github.event.inputs.artifacts == 'full'
       uses: actions/upload-artifact@v7
       with:
         name: NanaZip_Mainline_PortableBinaries
         path: Output/Binaries/Root/Binaries
     - name: Upload Debug Symbols
+      if: github.event.inputs.artifacts == 'full'
       uses: actions/upload-artifact@v7
       with:
         name: NanaZip_Mainline_DebugSymbols

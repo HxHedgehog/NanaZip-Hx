@@ -187,12 +187,16 @@ EXTERN_C HRESULT WINAPI K7ModernInitialize()
         winrt::init_apartment(winrt::apartment_type::single_threaded);
         using Implementation = winrt::NanaZip::Modern::implementation::App;
         g_AppInstance = winrt::make<Implementation>();
-        ::K7ModernApplyTheme();
     }
     catch (...)
     {
         return winrt::to_hresult();
     }
+    // Refresh the XAML theme with best effort. It must not fail the
+    // initialization because the XAML island may not be ready for
+    // Application::RequestedTheme at this point. Any failure is recorded
+    // to HKCU\Software\NanaZip\FM\ModernThemeError for diagnosis.
+    ::K7ModernRefreshTheme();
     return S_OK;
 }
 
@@ -215,6 +219,36 @@ EXTERN_C HRESULT WINAPI K7ModernUninitialize()
     return S_OK;
 }
 
+namespace
+{
+    static void K7ModernLogThemeError(_In_ HRESULT ErrorCode)
+    {
+        HKEY KeyHandle = nullptr;
+        if (ERROR_SUCCESS != ::RegCreateKeyExW(
+            HKEY_CURRENT_USER,
+            L"Software\\NanaZip\\FM",
+            0,
+            nullptr,
+            REG_OPTION_NON_VOLATILE,
+            KEY_SET_VALUE,
+            nullptr,
+            &KeyHandle,
+            nullptr))
+        {
+            return;
+        }
+        DWORD Value = static_cast<DWORD>(ErrorCode);
+        ::RegSetValueExW(
+            KeyHandle,
+            L"ModernThemeError",
+            0,
+            REG_DWORD,
+            reinterpret_cast<const BYTE*>(&Value),
+            sizeof(Value));
+        ::RegCloseKey(KeyHandle);
+    }
+}
+
 EXTERN_C VOID WINAPI K7ModernRefreshTheme()
 {
     try
@@ -223,7 +257,7 @@ EXTERN_C VOID WINAPI K7ModernRefreshTheme()
     }
     catch (...)
     {
-        // Do nothing.
+        ::K7ModernLogThemeError(winrt::to_hresult());
     }
 }
 

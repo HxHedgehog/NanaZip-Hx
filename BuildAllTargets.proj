@@ -58,6 +58,7 @@
   </Target>
   <Target Name="Build">
     <MSBuild
+      Condition="'$(NanaZipBuildMsixOnly)' != 'true'"
       Projects="$(MSBuildThisFileDirectory)NanaZipPackage\NanaZipPackage.wapproj"
       Targets="Build"
       BuildInParallel="True"
@@ -70,6 +71,7 @@
       StopOnFirstFailure="True"
       Properties="PreferredToolArchitecture=x64;Configuration=Release;Platform=x64" />
     <MSBuild
+      Condition="'$(NanaZipBuildMsixOnly)' != 'true'"
       Projects="$(MSBuildThisFileDirectory)NanaZip.ExtensionPackage\NanaZip.ExtensionPackage.Installer.proj"
       Targets="Build"
       BuildInParallel="True"
@@ -103,6 +105,7 @@
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\arm64\NanaZip.Core.Console.sfx" DestinationFolder="$(OutputBinariesPath)arm64" />
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\arm64\NanaZip.Core.Windows.sfx" DestinationFolder="$(OutputBinariesPath)arm64" />
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\arm64\NanaZip.Modern.dll" DestinationFolder="$(OutputBinariesPath)arm64" />
+    <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\arm64\NanaZip.Modern.FileManager.exe" DestinationFolder="$(OutputBinariesPath)arm64" />
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\arm64\NanaZip.Universal.Console.exe" DestinationFolder="$(OutputBinariesPath)arm64" />
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\arm64\NanaZip.Universal.Windows.exe" DestinationFolder="$(OutputBinariesPath)arm64" />
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\arm64\Mile.Xaml.Styles.SunValley.xbf" DestinationFolder="$(OutputBinariesPath)arm64" />
@@ -115,6 +118,7 @@
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\x64\NanaZip.Core.Console.sfx" DestinationFolder="$(OutputBinariesPath)x64" />
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\x64\NanaZip.Core.Windows.sfx" DestinationFolder="$(OutputBinariesPath)x64" />
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\x64\NanaZip.Modern.dll" DestinationFolder="$(OutputBinariesPath)x64" />
+    <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\x64\NanaZip.Modern.FileManager.exe" DestinationFolder="$(OutputBinariesPath)x64" />
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\x64\NanaZip.Universal.Console.exe" DestinationFolder="$(OutputBinariesPath)x64" />
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\x64\NanaZip.Universal.Windows.exe" DestinationFolder="$(OutputBinariesPath)x64" />
     <Copy SourceFiles="$(InputBinariesPath)NanaZipPackage\x64\Mile.Xaml.Styles.SunValley.xbf" DestinationFolder="$(OutputBinariesPath)x64" />
