@@ -9,6 +9,7 @@ on:
     paths-ignore:
       - 'Documents/**'
       - '**/*.md'
+  workflow_dispatch:
 
 jobs:
   build:
