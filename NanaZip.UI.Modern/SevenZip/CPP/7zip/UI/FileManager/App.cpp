@@ -211,6 +211,13 @@ HRESULT CApp::Create(HWND hwnd, const UString &mainPath, const UString &arcForma
 
       XamlSource.Content().TabFocusNavigation(KeyboardNavigationMode::Local);
 
+      // **************** NanaZip Modification Start ****************
+      // The global Application.RequestedTheme cannot be set after content
+      // exists, so islands start with the default theme. Apply the current
+      // theme to every island created so far right after creation.
+      ::K7ModernRefreshTheme();
+      // **************** NanaZip Modification End ******************
+
       XamlSource.TakeFocusRequested(
           [this](
               DesktopWindowXamlSource const& sender,

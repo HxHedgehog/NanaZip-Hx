@@ -1,4 +1,4 @@
-﻿// Panel.cpp
+// Panel.cpp
 
 #include "StdAfx.h"
 
@@ -33,6 +33,7 @@
 // **************** NanaZip Modification Start ****************
 #include <K7Base.h>
 #include <K7User.h>
+#include <NanaZip.Modern.h>
 // **************** NanaZip Modification End ****************
 
 #include "PropertyNameRes.h"
@@ -448,6 +449,12 @@ bool CPanel::OnCreate(CREATESTRUCT * /* createStruct */)
 
       XamlSource.Content().TabFocusNavigation(KeyboardNavigationMode::Local);
 
+      // **************** NanaZip Modification Start ****************
+      // Apply the current theme to every island created so far right after
+      // creation (global Application.RequestedTheme cannot be set at runtime).
+      ::K7ModernRefreshTheme();
+      // **************** NanaZip Modification End ******************
+
       XamlSource.TakeFocusRequested(
           [this](
               DesktopWindowXamlSource const& sender,
@@ -553,6 +560,12 @@ bool CPanel::OnCreate(CREATESTRUCT * /* createStruct */)
           ::GetPropW(_statusBarWindow, L"XamlWindowSource"));
 
       XamlSource.Content().TabFocusNavigation(KeyboardNavigationMode::Local);
+
+      // **************** NanaZip Modification Start ****************
+      // Apply the current theme to every island created so far right after
+      // creation (global Application.RequestedTheme cannot be set at runtime).
+      ::K7ModernRefreshTheme();
+      // **************** NanaZip Modification End ******************
 
       XamlSource.TakeFocusRequested(
           [this](
