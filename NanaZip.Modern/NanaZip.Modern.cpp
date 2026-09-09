@@ -109,6 +109,63 @@ namespace
 
 namespace
 {
+    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+    static void K7ThemeDebugTrace(
+        _In_z_ PCWSTR Format,
+        ...)
+    {
+        SYSTEMTIME Time = {};
+        ::GetLocalTime(&Time);
+
+        WCHAR Buffer[1024] = {};
+        int Length = wsprintfW(
+            Buffer,
+            L"[%02u:%02u:%02u.%03u][%u:%u] ",
+            Time.wHour,
+            Time.wMinute,
+            Time.wSecond,
+            Time.wMilliseconds,
+            ::GetCurrentProcessId(),
+            ::GetCurrentThreadId());
+
+        va_list Arguments;
+        va_start(Arguments, Format);
+        Length += wvsprintfW(Buffer + Length, Format, Arguments);
+        va_end(Arguments);
+
+        Buffer[Length++] = L'\r';
+        Buffer[Length++] = L'\n';
+        Buffer[Length] = L'\0';
+
+        OutputDebugStringW(Buffer);
+
+        WCHAR Path[MAX_PATH + 32] = {};
+        if (0 != ::GetTempPathW(MAX_PATH, Path))
+        {
+            lstrcatW(Path, L"NanaZipThemeDebug.log");
+            HANDLE FileHandle = ::CreateFileW(
+                Path,
+                FILE_APPEND_DATA,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                nullptr,
+                OPEN_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                nullptr);
+            if (INVALID_HANDLE_VALUE != FileHandle)
+            {
+                DWORD Written = 0;
+                ::WriteFile(
+                    FileHandle,
+                    Buffer,
+                    Length * sizeof(WCHAR),
+                    &Written,
+                    nullptr);
+                ::CloseHandle(FileHandle);
+            }
+        }
+    }
+    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+
     static bool K7ModernReadThemeInvert()
     {
         // The "Invert Theme" option is exposed by the File Manager settings and
@@ -150,7 +207,16 @@ namespace
             ::MileShouldAppsUseDarkMode() &&
             !::MileShouldAppsUseHighContrastMode();
         const bool InvertTheme = ::K7ModernReadThemeInvert();
-        return (InvertTheme ? !BaseShouldUseDarkMode : BaseShouldUseDarkMode) ?
+        const bool UseDark = InvertTheme ? !BaseShouldUseDarkMode
+                                         : BaseShouldUseDarkMode;
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        K7ThemeDebugTrace(
+            L"K7ModernComputeTheme: systemDark=%d invert=%d => xamlTheme=%ws",
+            (int)BaseShouldUseDarkMode,
+            (int)InvertTheme,
+            UseDark ? L"Dark" : L"Light");
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+        return UseDark ?
             winrt::Windows::UI::Xaml::ApplicationTheme::Dark :
             winrt::Windows::UI::Xaml::ApplicationTheme::Light;
     }
@@ -185,19 +251,50 @@ namespace
                     RootElement.RequestedTheme(
                         (winrt::Windows::UI::Xaml::ApplicationTheme::Dark
                             == Theme)
-                        ? winrt::Windows::UI::Xaml::ElementTheme::Dark
-                        : winrt::Windows::UI::Xaml::ElementTheme::Light);
+                            ? winrt::Windows::UI::Xaml::ElementTheme::Dark
+                            : winrt::Windows::UI::Xaml::ElementTheme::Light);
+                    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+                    K7ThemeDebugTrace(
+                        L"K7ModernApplyXamlWindowTheme: hwnd=%08X theme applied",
+                        (DWORD)(DWORD_PTR)WindowHandle);
+                    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
                 }
+                else
+                {
+                    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+                    K7ThemeDebugTrace(
+                        L"K7ModernApplyXamlWindowTheme: hwnd=%08X no FrameworkElement root",
+                        (DWORD)(DWORD_PTR)WindowHandle);
+                    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+                }
+            }
+            else
+            {
+                // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+                K7ThemeDebugTrace(
+                    L"K7ModernApplyXamlWindowTheme: hwnd=%08X no content",
+                    (DWORD)(DWORD_PTR)WindowHandle);
+                // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             }
         }
         catch (...)
         {
             // Ignore windows whose XAML content is not ready yet.
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"K7ModernApplyXamlWindowTheme: hwnd=%08X EXCEPTION",
+                (DWORD)(DWORD_PTR)WindowHandle);
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
         }
     }
 
     static void K7ModernApplyTheme()
     {
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        K7ThemeDebugTrace(
+            L"K7ModernApplyTheme: enter appInstance=%d",
+            (int)(bool)g_AppInstance);
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
         if (!g_AppInstance)
         {
             return;
@@ -262,6 +359,11 @@ namespace
             {
                 if (::GetPropW(WindowHandle, L"XamlWindowSource"))
                 {
+                    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+                    K7ThemeDebugTrace(
+                        L"K7ModernApplyTheme: send WM_SETTINGCHANGE to xaml hwnd=%08X",
+                        (DWORD)(DWORD_PTR)WindowHandle);
+                    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
                     ::SendMessageW(
                         WindowHandle,
                         WM_SETTINGCHANGE,
@@ -271,6 +373,12 @@ namespace
             }
             SendingSettingChange = false;
         }
+
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        K7ThemeDebugTrace(
+            L"K7ModernApplyTheme: exit (xaml windows total=%u)",
+            (unsigned)XamlWindows.size());
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     }
 }
 

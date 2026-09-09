@@ -38,6 +38,8 @@ EXTERN_C HRESULT WINAPI GetThemeClass(
 #include <CommCtrl.h>
 #pragma comment(lib,"comctl32.lib")
 
+#include <stdarg.h> // *** TEMPORARY DEBUG INSTRUMENTATION ***
+
 // TODO: Move some workaround for NanaZip.UI.* to this.
 
 namespace
@@ -49,6 +51,63 @@ namespace
     const COLORREF g_DarkModeForegroundColor = RGB(255, 255, 255);
     const COLORREF g_DarkModeBorderColor = RGB(127, 127, 127);
     const COLORREF g_DarkModeMenuSelectedBackgroundColor = RGB(65, 65, 65);
+
+    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+    static void K7ThemeDebugTrace(
+        _In_z_ PCWSTR Format,
+        ...)
+    {
+        SYSTEMTIME Time = {};
+        ::GetLocalTime(&Time);
+
+        WCHAR Buffer[1024] = {};
+        int Length = wsprintfW(
+            Buffer,
+            L"[%02u:%02u:%02u.%03u][%u:%u] ",
+            Time.wHour,
+            Time.wMinute,
+            Time.wSecond,
+            Time.wMilliseconds,
+            ::GetCurrentProcessId(),
+            ::GetCurrentThreadId());
+
+        va_list Arguments;
+        va_start(Arguments, Format);
+        Length += wvsprintfW(Buffer + Length, Format, Arguments);
+        va_end(Arguments);
+
+        Buffer[Length++] = L'\r';
+        Buffer[Length++] = L'\n';
+        Buffer[Length] = L'\0';
+
+        OutputDebugStringW(Buffer);
+
+        WCHAR Path[MAX_PATH + 32] = {};
+        if (0 != ::GetTempPathW(MAX_PATH, Path))
+        {
+            lstrcatW(Path, L"NanaZipThemeDebug.log");
+            HANDLE FileHandle = ::CreateFileW(
+                Path,
+                FILE_APPEND_DATA,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                nullptr,
+                OPEN_ALWAYS,
+                FILE_ATTRIBUTE_NORMAL,
+                nullptr);
+            if (INVALID_HANDLE_VALUE != FileHandle)
+            {
+                DWORD Written = 0;
+                ::WriteFile(
+                    FileHandle,
+                    Buffer,
+                    Length * sizeof(WCHAR),
+                    &Written,
+                    nullptr);
+                ::CloseHandle(FileHandle);
+            }
+        }
+    }
+    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
 
     static bool K7UserReadThemeInvert()
     {
@@ -86,8 +145,17 @@ namespace
         const bool BaseShouldUseDarkMode =
             ::MileShouldAppsUseDarkMode() &&
             !::MileShouldAppsUseHighContrastMode();
-        return ::K7UserReadThemeInvert() ?
-            !BaseShouldUseDarkMode : BaseShouldUseDarkMode;
+        const bool InvertTheme = ::K7UserReadThemeInvert();
+        const bool Result = InvertTheme ? !BaseShouldUseDarkMode
+                                        : BaseShouldUseDarkMode;
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        K7ThemeDebugTrace(
+            L"ComputeShouldAppsUseDarkMode: systemDark=%d invert=%d => dark=%d",
+            (int)BaseShouldUseDarkMode,
+            (int)InvertTheme,
+            (int)Result);
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+        return Result;
     }
 
     static void ApplyProcessThemePolicy(
@@ -108,6 +176,11 @@ namespace
                 ? MILE_PREFERRED_APP_MODE_DARK
                 : MILE_PREFERRED_APP_MODE_DEFAULT);
         ::MileRefreshImmersiveColorPolicyState();
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        K7ThemeDebugTrace(
+            L"ApplyProcessThemePolicy: dark=%d (SetPreferredAppMode + RefreshImmersiveColorPolicyState)",
+            (int)ShouldUseDarkMode);
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     }
 
     static HBRUSH GetDarkModeBackgroundBrush()
@@ -267,6 +340,12 @@ namespace
             ClassName,
             MO_ARRAY_SIZE(ClassName)))
         {
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"RefreshWindowTheme: hwnd=%08X class=%ws",
+                (DWORD)(DWORD_PTR)WindowHandle,
+                ClassName);
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             // Every themed control needs WM_THEMECHANGED to reopen its theme
             // handle after the immersive color policy has been refreshed by
             // ApplyProcessThemePolicy. Controls which do not receive it keep
@@ -419,6 +498,30 @@ namespace
 
         switch (uMsg)
         {
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        case WM_ACTIVATE:
+        {
+            K7ThemeDebugTrace(
+                L"WM_ACTIVATE: hwnd=%08X wp=%08X",
+                (DWORD)(DWORD_PTR)hWnd,
+                (DWORD)(DWORD_PTR)wParam);
+            break;
+        }
+        case WM_THEMECHANGED:
+        {
+            K7ThemeDebugTrace(
+                L"WM_THEMECHANGED(recv): hwnd=%08X",
+                (DWORD)(DWORD_PTR)hWnd);
+            break;
+        }
+        case WM_DESTROY:
+        {
+            K7ThemeDebugTrace(
+                L"WM_DESTROY: hwnd=%08X",
+                (DWORD)(DWORD_PTR)hWnd);
+            break;
+        }
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORLISTBOX:
         case WM_CTLCOLORDLG:
@@ -460,6 +563,13 @@ namespace
         case WM_SETTINGCHANGE:
         {
             LPCTSTR Section = reinterpret_cast<LPCTSTR>(lParam);
+
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"WM_SETTINGCHANGE(recv): hwnd=%08X section=%ws",
+                (DWORD)(DWORD_PTR)hWnd,
+                Section ? Section : L"(null)");
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
 
             if (Section && 0 == std::wcscmp(Section, L"ImmersiveColorSet"))
             {
@@ -514,6 +624,12 @@ namespace
         case WM_INITDIALOG:
         case WM_CREATE:
         {
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"WM_INITDIALOG/WM_CREATE: hwnd=%08X msg=%u",
+                (DWORD)(DWORD_PTR)hWnd,
+                uMsg);
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             ::MileAllowDarkModeForWindow(
                 hWnd,
                 TRUE);
@@ -1502,8 +1618,14 @@ namespace
 
 EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme()
 {
+    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+    K7ThemeDebugTrace(L"K7UserRefreshTheme: enter");
+    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     if (!g_GlobalInitialized)
     {
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        K7ThemeDebugTrace(L"K7UserRefreshTheme: not initialized, skip");
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
         return MO_RESULT_SUCCESS_OK;
     }
 
@@ -1561,6 +1683,11 @@ EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme()
     },
         0);
 
+    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+    K7ThemeDebugTrace(
+        L"K7UserRefreshTheme: exit dark=%d",
+        (int)g_ThreadContext.ShouldAppsUseDarkMode);
+    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     return MO_RESULT_SUCCESS_OK;
 }
 
@@ -1577,6 +1704,10 @@ EXTERN_C MO_RESULT MOAPI K7UserInitializeDarkModeSupport()
         // return success without doing anything on older versions of Windows.
         return MO_RESULT_SUCCESS_OK;
     }
+
+    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+    K7ThemeDebugTrace(L"K7UserInitializeDarkModeSupport: begin");
+    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
 
     if (!::InitializeFunctionTable())
     {

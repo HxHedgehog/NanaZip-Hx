@@ -24,6 +24,62 @@
 
 using namespace NWindows;
 
+// *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+static void K7ThemeDebugTrace(PCWSTR Format, ...)
+{
+  SYSTEMTIME Time = {};
+  ::GetLocalTime(&Time);
+
+  WCHAR Buffer[1024] = {};
+  int Length = wsprintfW(
+    Buffer,
+    L"[%02u:%02u:%02u.%03u][%u:%u] ",
+    Time.wHour,
+    Time.wMinute,
+    Time.wSecond,
+    Time.wMilliseconds,
+    ::GetCurrentProcessId(),
+    ::GetCurrentThreadId());
+
+  va_list Arguments;
+  va_start(Arguments, Format);
+  Length += wvsprintfW(Buffer + Length, Format, Arguments);
+  va_end(Arguments);
+
+  Buffer[Length++] = L'\r';
+  Buffer[Length++] = L'\n';
+  Buffer[Length] = L'\0';
+
+  OutputDebugStringW(Buffer);
+
+  WCHAR Path[MAX_PATH + 32] = {};
+  if (0 != ::GetTempPathW(MAX_PATH, Path))
+  {
+    lstrcatW(Path, L"NanaZipThemeDebug.log");
+    HANDLE FileHandle = ::CreateFileW(
+      Path,
+      FILE_APPEND_DATA,
+      FILE_SHARE_READ | FILE_SHARE_WRITE,
+      nullptr,
+      OPEN_ALWAYS,
+      FILE_ATTRIBUTE_NORMAL,
+      nullptr);
+    if (INVALID_HANDLE_VALUE != FileHandle)
+    {
+      DWORD Written = 0;
+      ::WriteFile(
+        FileHandle,
+        Buffer,
+        Length * sizeof(WCHAR),
+        &Written,
+        nullptr);
+      ::CloseHandle(FileHandle);
+    }
+  }
+}
+// *** END TEMPORARY DEBUG INSTRUMENTATION ***
+
+
 static const UInt32 kLangIDs[] =
 {
   IDX_SETTINGS_SHOW_DOTS,
@@ -217,6 +273,11 @@ static void AddSize_MB(UString &s, UInt64 size)
 
 LONG CSettingsPage::OnApply()
 {
+  // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+  K7ThemeDebugTrace(
+    L"SettingsPage OnApply: enter wasChanged=%d",
+    (int)_wasChanged);
+  // *** END TEMPORARY DEBUG INSTRUMENTATION ***
   if (_wasChanged)
   {
     CFmSettings st;
@@ -236,13 +297,25 @@ LONG CSettingsPage::OnApply()
 
     st.ShowSystemMenu = IsButtonCheckedBool(IDX_SETTINGS_SHOW_SYSTEM_MENU);
 
+    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+    K7ThemeDebugTrace(
+      L"SettingsPage OnApply: saving invert=%d",
+      (int)st.InvertTheme);
+    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     st.Save();
     _wasChanged = false;
 
     // **************** NanaZip Modification Start ****************
     // Re-check the dark/light inversion immediately after saving.
+    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+    K7ThemeDebugTrace(
+      L"SettingsPage OnApply: calling K7UserRefreshTheme + K7ModernRefreshTheme");
+    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     ::K7UserRefreshTheme();
     ::K7ModernRefreshTheme();
+    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+    K7ThemeDebugTrace(L"SettingsPage OnApply: refresh calls returned");
+    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     // **************** NanaZip Modification End ****************
   }
 

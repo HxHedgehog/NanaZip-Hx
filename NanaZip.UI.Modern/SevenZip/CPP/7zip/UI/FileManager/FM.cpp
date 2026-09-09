@@ -866,6 +866,61 @@ static void ExecuteCommand(UINT commandID)
   }
 }
 
+// *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+static void K7ThemeDebugTrace(PCWSTR Format, ...)
+{
+  SYSTEMTIME Time = {};
+  ::GetLocalTime(&Time);
+
+  WCHAR Buffer[1024] = {};
+  int Length = wsprintfW(
+    Buffer,
+    L"[%02u:%02u:%02u.%03u][%u:%u] ",
+    Time.wHour,
+    Time.wMinute,
+    Time.wSecond,
+    Time.wMilliseconds,
+    ::GetCurrentProcessId(),
+    ::GetCurrentThreadId());
+
+  va_list Arguments;
+  va_start(Arguments, Format);
+  Length += wvsprintfW(Buffer + Length, Format, Arguments);
+  va_end(Arguments);
+
+  Buffer[Length++] = L'\r';
+  Buffer[Length++] = L'\n';
+  Buffer[Length] = L'\0';
+
+  OutputDebugStringW(Buffer);
+
+  WCHAR Path[MAX_PATH + 32] = {};
+  if (0 != ::GetTempPathW(MAX_PATH, Path))
+  {
+    lstrcatW(Path, L"NanaZipThemeDebug.log");
+    HANDLE FileHandle = ::CreateFileW(
+      Path,
+      FILE_APPEND_DATA,
+      FILE_SHARE_READ | FILE_SHARE_WRITE,
+      nullptr,
+      OPEN_ALWAYS,
+      FILE_ATTRIBUTE_NORMAL,
+      nullptr);
+    if (INVALID_HANDLE_VALUE != FileHandle)
+    {
+      DWORD Written = 0;
+      ::WriteFile(
+        FileHandle,
+        Buffer,
+        Length * sizeof(WCHAR),
+        &Written,
+        nullptr);
+      ::CloseHandle(FileHandle);
+    }
+  }
+}
+// *** END TEMPORARY DEBUG INSTRUMENTATION ***
+
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
   switch (message)
@@ -1141,9 +1196,28 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
         break;
     }
+    case WM_THEMECHANGED:
+    {
+      // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+      K7ThemeDebugTrace(
+        L"FM WndProc WM_THEMECHANGED: hwnd=%08X",
+        (DWORD)(DWORD_PTR)hWnd);
+      // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+      break;
+    }
     case WM_SETTINGCHANGE:
     {
-        ::SendMessageW(g_App.m_ToolBar, message, wParam, lParam);
+      // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+      {
+        LPCWSTR DebugSection = reinterpret_cast<LPCWSTR>(lParam);
+        K7ThemeDebugTrace(
+          L"FM WndProc WM_SETTINGCHANGE: hwnd=%08X section=%ws toolbar=%08X",
+          (DWORD)(DWORD_PTR)hWnd,
+          DebugSection ? DebugSection : L"(null)",
+          (DWORD)(DWORD_PTR)g_App.m_ToolBar);
+      }
+      // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+      ::SendMessageW(g_App.m_ToolBar, message, wParam, lParam);
 
         // **************** NanaZip Modification Start ****************
         // Refresh the XAML theme when the system light/dark mode changes so
