@@ -267,6 +267,16 @@ namespace
             ClassName,
             MO_ARRAY_SIZE(ClassName)))
         {
+            // Every themed control needs WM_THEMECHANGED to reopen its theme
+            // handle after the immersive color policy has been refreshed by
+            // ApplyProcessThemePolicy. Controls which do not receive it keep
+            // rendering with the stale theme state and can stop drawing
+            // anything at all once repainted (e.g. list views and status
+            // bars ending up blank after the inverted theme is applied).
+            // This used to be sent only for unhandled window classes, which
+            // is why only tree views refreshed correctly.
+            ::SendMessageW(WindowHandle, WM_THEMECHANGED, 0, 0);
+
             if (0 == std::wcscmp(ClassName, WC_BUTTONW))
             {
                 ::SetWindowTheme(WindowHandle, L"Explorer", nullptr);
@@ -319,6 +329,12 @@ namespace
                     ::GetWindowLongW(
                         WindowHandle,
                         GWL_EXSTYLE) | WS_EX_COMPOSITED);
+
+                // The theme handle has just been recreated by the
+                // WM_THEMECHANGED sent above, so the cached handle used by
+                // the dark mode draw detours has to be refreshed too.
+                g_ThreadContext.StatusBarThemeHandle =
+                    ::GetWindowTheme(WindowHandle);
             }
             else if (0 == std::wcscmp(ClassName, WC_TABCONTROLW))
             {
@@ -328,12 +344,12 @@ namespace
                     ::GetWindowLongW(
                         WindowHandle,
                         GWL_EXSTYLE) | WS_EX_COMPOSITED);
+
+                g_ThreadContext.TabControlThemeHandle =
+                    ::GetWindowTheme(WindowHandle);
             }
             else
             {
-                // DO NOT USE ELSE IF INSTEAD
-                // FOR HANDLING DYNAMIC DARK AND LIGHT MODE SWITCH PROPERLY
-
                 if (0 == std::wcscmp(ClassName, TOOLBARCLASSNAMEW))
                 {
                     // make it double bufferred
@@ -359,8 +375,6 @@ namespace
                         0,
                         reinterpret_cast<LPARAM>(&ColorScheme));
                 }
-
-                ::SendMessageW(WindowHandle, WM_THEMECHANGED, 0, 0);
             }
         }
     }

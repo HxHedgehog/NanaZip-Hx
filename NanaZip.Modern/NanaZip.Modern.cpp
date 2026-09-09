@@ -211,16 +211,16 @@ namespace
         // contents when Application.RequestedTheme changes at runtime, so
         // the root element theme of every hosted XAML window has to be
         // updated directly.
+        std::vector<HWND> XamlWindows;
         ::EnumThreadWindows(
             ::GetCurrentThreadId(),
             [](
                 _In_ HWND hWnd,
                 _In_ LPARAM lParam) -> BOOL
         {
-            auto Theme = reinterpret_cast<
-                winrt::Windows::UI::Xaml::ApplicationTheme*>(lParam);
+            auto Windows = reinterpret_cast<std::vector<HWND>*>(lParam);
 
-            ::K7ModernApplyXamlWindowTheme(hWnd, *Theme);
+            Windows->push_back(hWnd);
 
             ::EnumChildWindows(
                 hWnd,
@@ -228,10 +228,9 @@ namespace
                     _In_ HWND hWnd,
                     _In_ LPARAM lParam) -> BOOL
             {
-                auto Theme = reinterpret_cast<
-                    winrt::Windows::UI::Xaml::ApplicationTheme*>(lParam);
+                auto Windows = reinterpret_cast<std::vector<HWND>*>(lParam);
 
-                ::K7ModernApplyXamlWindowTheme(hWnd, *Theme);
+                Windows->push_back(hWnd);
 
                 return TRUE;
             },
@@ -239,7 +238,39 @@ namespace
 
             return TRUE;
         },
-            reinterpret_cast<LPARAM>(&Theme));
+            reinterpret_cast<LPARAM>(&XamlWindows));
+
+        for (HWND WindowHandle : XamlWindows)
+        {
+            ::K7ModernApplyXamlWindowTheme(WindowHandle, Theme);
+        }
+
+        // XAML Islands re-evaluate their theme resources when they receive
+        // WM_SETTINGCHANGE with the ImmersiveColorSet section, which is also
+        // the message the file manager forwards to its toolbar window when
+        // the system color changes. RequestedTheme changes alone do not
+        // refresh already loaded island contents, leaving the CommandBar
+        // with stale foreground brushes (invisible icons).
+        // Re-entrancy guard: the file manager WM_SETTINGCHANGE handler calls
+        // K7ModernRefreshTheme, so a XAML window forwarding this message
+        // back to its parent must not start an infinite recursion.
+        static bool SendingSettingChange = false;
+        if (!SendingSettingChange)
+        {
+            SendingSettingChange = true;
+            for (HWND WindowHandle : XamlWindows)
+            {
+                if (::GetPropW(WindowHandle, L"XamlWindowSource"))
+                {
+                    ::SendMessageW(
+                        WindowHandle,
+                        WM_SETTINGCHANGE,
+                        0,
+                        reinterpret_cast<LPARAM>(L"ImmersiveColorSet"));
+                }
+            }
+            SendingSettingChange = false;
+        }
     }
 }
 
