@@ -1,4 +1,4 @@
-﻿/*
+/*
  * PROJECT:    NanaZip.Modern
  * FILE:       NanaZip.Modern.cpp
  * PURPOSE:    Implementation for NanaZip Modern Experience
@@ -301,8 +301,27 @@ namespace
         }
         const winrt::Windows::UI::Xaml::ApplicationTheme Theme =
             ::K7ModernComputeTheme();
-        winrt::Windows::UI::Xaml::Application::Current().RequestedTheme(
-            Theme);
+        // *** NanaZip Modification Start ****************
+        // Application.RequestedTheme throws once XAML content exists (and
+        // before the XAML framework is initialized in this process), which
+        // aborted this whole function and silently skipped the per-island
+        // refresh below. The setter is best-effort only; the per-island
+        // RootElement.RequestedTheme + WM_SETTINGCHANGE path is what
+        // actually switches live XAML Islands.
+        try
+        {
+            winrt::Windows::UI::Xaml::Application::Current().RequestedTheme(
+                Theme);
+        }
+        catch (...)
+        {
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"K7ModernApplyTheme: Application::RequestedTheme threw hr=0x%08X",
+                (DWORD)(winrt::to_hresult()));
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+        }
+        // *** NanaZip Modification End ******************
 
         // XAML Islands do not refresh already loaded DesktopWindowXamlSource
         // contents when Application.RequestedTheme changes at runtime, so
