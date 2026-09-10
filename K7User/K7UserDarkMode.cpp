@@ -1639,12 +1639,18 @@ namespace
                 break;
             }
         }
-        else if (IsThemeClass(hTheme, L"ItemsView"))
+        else if (
+            IsThemeClass(hTheme, L"ItemsView") ||
+            IsThemeClass(hTheme, L"Header"))
         {
             // Header items and list view item backgrounds. Parts 1-4 cover
             // HP_HEADERITEM..HP_HEADERITEMSORTARROW as well as
             // LVP_LISTITEM..LVP_LISTSORTEDDETAIL, which would otherwise keep
-            // rendering with the light theme colors.
+            // rendering with the light theme colors. The Header class also
+            // matches, because header controls only get ItemsView applied
+            // via SetWindowTheme during an in-session theme switch, while
+            // freshly created controls (e.g. after a restart with inverted
+            // theme already enabled) still use the default Header class.
             switch (iPartId)
             {
             case 1:
@@ -1668,12 +1674,17 @@ namespace
                 break;
             }
         }
-        else if (::IsThemeClass(hTheme, L"Explorer"))
+        else if (
+            ::IsThemeClass(hTheme, L"Explorer") ||
+            ::IsThemeClass(hTheme, L"Button"))
         {
             // Buttons use the Explorer class via SetWindowTheme. Its part
             // ids collide with the tree view glyph parts, but the File
             // Manager windows don't contain tree views, so drawing the
-            // button parts dark is safe here.
+            // button parts dark is safe here. The Button class also matches
+            // for the same reason as Header above: buttons created after
+            // startup (e.g. reopening the options dialog in a session that
+            // started with inverted theme) still use the default class.
             switch (iPartId)
             {
             case BP_PUSHBUTTON:
@@ -1828,13 +1839,28 @@ namespace
             }
         }
 
-        return ::OriginalDrawThemeBackgroundEx(
+        // In dark mode route the rest through DetouredDrawThemeBackground so
+        // the Button/Header/Explorer/ItemsView fallbacks also cover callers
+        // of DrawThemeBackgroundEx (e.g. freshly created controls after a
+        // restart with inverted theme already enabled).
+        if (pOptions && (pOptions->dwFlags & DTBG_CLIPRECT))
+        {
+            return ::OriginalDrawThemeBackgroundEx(
+                hTheme,
+                hdc,
+                iPartId,
+                iStateId,
+                pRect,
+                pOptions);
+        }
+
+        return ::DetouredDrawThemeBackground(
             hTheme,
             hdc,
             iPartId,
             iStateId,
             pRect,
-            pOptions);
+            nullptr);
     }
 
     static HTHEME WINAPI DetouredOpenNcThemeData(
