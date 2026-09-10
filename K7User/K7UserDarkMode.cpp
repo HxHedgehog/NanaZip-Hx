@@ -173,7 +173,7 @@ namespace
         // ShouldUseDarkMode is derived from the system setting there.
         ::MileSetPreferredAppMode(
             ShouldUseDarkMode
-                ? MILE_PREFERRED_APP_MODE_DARK
+                ? MILE_PREFERRED_APP_MODE_FORCE_DARK
                 : MILE_PREFERRED_APP_MODE_DEFAULT);
         ::MileRefreshImmersiveColorPolicyState();
         // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
@@ -448,6 +448,60 @@ namespace
                         reinterpret_cast<LPARAM>(&ColorScheme));
                 }
             }
+        }
+    }
+
+    static void CALLBACK K7UserWinEventProc(
+        _In_opt_ HWINEVENTHOOK WinEventHook,
+        _In_ DWORD WinEvent,
+        _In_opt_ HWND WindowHandle,
+        _In_ LONG ObjectId,
+        _In_ LONG ChildId,
+        _In_ DWORD EventThreadId,
+        _In_ DWORD EventTime)
+    {
+        UNREFERENCED_PARAMETER(WinEventHook);
+        UNREFERENCED_PARAMETER(EventThreadId);
+        UNREFERENCED_PARAMETER(EventTime);
+
+        // Apply the class-specific theme settings (Explorer buttons, CFD
+        // combo boxes and edit controls, ItemsView headers and list views,
+        // composited status bars) to every window as soon as it is created.
+        // The in-session theme switch covers existing windows through
+        // K7UserRefreshTheme, but freshly created controls (e.g. after a
+        // restart with the inverted theme already enabled, or dialogs opened
+        // later on) otherwise keep using their default theme classes and
+        // render with light theme data.
+        if (EVENT_OBJECT_CREATE != WinEvent ||
+            OBJID_WINDOW != ObjectId ||
+            0 != ChildId ||
+            !WindowHandle ||
+            !g_GlobalInitialized)
+        {
+            return;
+        }
+
+        wchar_t ClassName[256] = {};
+        if (0 == ::GetClassNameW(
+            WindowHandle,
+            ClassName,
+            MO_ARRAY_SIZE(ClassName)))
+        {
+            return;
+        }
+
+        // Only the classes which RefreshWindowTheme has special handling
+        // for need the call; skip everything else to keep the hook cheap.
+        if (0 == std::wcscmp(ClassName, WC_BUTTONW) ||
+            0 == std::wcscmp(ClassName, WC_COMBOBOXW) ||
+            0 == std::wcscmp(ClassName, WC_EDITW) ||
+            0 == std::wcscmp(ClassName, WC_HEADERW) ||
+            0 == std::wcscmp(ClassName, WC_LISTVIEWW) ||
+            0 == std::wcscmp(ClassName, STATUSCLASSNAMEW) ||
+            0 == std::wcscmp(ClassName, WC_TABCONTROLW) ||
+            0 == std::wcscmp(ClassName, TOOLBARCLASSNAMEW))
+        {
+            ::RefreshWindowTheme(WindowHandle);
         }
     }
 
@@ -2085,6 +2139,25 @@ EXTERN_C MO_RESULT MOAPI K7UserInitializeDarkModeSupport()
     ::K7BaseDetourTransactionCommit();
 
     g_GlobalInitialized = true;
+
+    // Watch for window creation so every themed control gets its
+    // class-specific dark mode settings applied immediately, independent of
+    // when it is created (startup, dialogs opened later, restarts with the
+    // inverted theme already enabled, ...).
+    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+    K7ThemeDebugTrace(L"K7UserInitializeDarkModeSupport: installing WinEvent hook");
+    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+    if (!::SetWinEventHook(
+        EVENT_OBJECT_CREATE,
+        EVENT_OBJECT_CREATE,
+        nullptr,
+        ::K7UserWinEventProc,
+        0,
+        0,
+        WINEVENT_OUTOFCONTEXT))
+    {
+        K7ThemeDebugTrace(L"K7UserInitializeDarkModeSupport: SetWinEventHook failed");
+    }
 
     return MO_RESULT_SUCCESS_OK;
 }
