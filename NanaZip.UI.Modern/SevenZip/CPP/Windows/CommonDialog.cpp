@@ -311,10 +311,12 @@ bool MyGetOpenFileName(HWND hwnd, LPCWSTR title,
       Dialog->Release();
     }
 
-    if (!res)
+    // Fall back to the legacy dialog only when the modern dialog is truly
+    // unavailable (e.g. COM was not initialized on this thread). A user
+    // cancel returns a failed HRESULT from Show() as well, and falling back
+    // there would immediately pop up a second dialog.
+    if (!res && !Dialog)
     {
-      // Fall back to the legacy dialog when the modern dialog is
-      // unavailable (e.g. COM was not initialized on this thread).
       // OPENFILENAME_NT4W
       OPENFILENAMEW p;
       memset(&p, 0, sizeof(p));

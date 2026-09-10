@@ -1816,14 +1816,19 @@ namespace
             IsThemeClass(hTheme, L"ItemsView") ||
             IsThemeClass(hTheme, L"Header"))
         {
-            // Header items and list view item backgrounds. Parts 1-4 cover
-            // HP_HEADERITEM..HP_HEADERITEMSORTARROW as well as
-            // LVP_LISTITEM..LVP_LISTSORTEDDETAIL, which would otherwise keep
-            // rendering with the light theme colors. The Header class also
-            // matches, because header controls only get ItemsView applied
-            // via SetWindowTheme during an in-session theme switch, while
+            // Header items and list view item backgrounds. Part 1 covers
+            // HP_HEADERITEM as well as LVP_LISTITEM; parts 2-4 cover the
+            // sorted/detail variations. The Header class also matches,
+            // because header controls only get ItemsView applied via
+            // SetWindowTheme during an in-session theme switch, while
             // freshly created controls (e.g. after a restart with inverted
             // theme already enabled) still use the default Header class.
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"DrawThemeBackground ItemsView/Header part=%d state=%d",
+                iPartId,
+                iStateId);
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             switch (iPartId)
             {
             case 1:
@@ -1836,15 +1841,16 @@ namespace
                         : ::GetDarkModeBackgroundBrush());
                 return S_OK;
             }
-            case 2:
-            case 3:
-            case 4:
+            default:
             {
+                // Every remaining part (0 = list background, 2-4 = detail
+                // variations, 5 = empty text area, ...) is a plain
+                // background surface. The DirectUI list inside the common
+                // file dialogs uses parts outside 1-4, which previously
+                // fell through and kept rendering with light theme colors.
                 ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
                 return S_OK;
             }
-            default:
-                break;
             }
         }
         else if (
