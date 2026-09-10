@@ -242,7 +242,9 @@ bool MyGetOpenFileName(HWND hwnd, LPCWSTR title,
       DWORD Options = 0;
       if (SUCCEEDED(Dialog->GetOptions(&Options)))
       {
-        Dialog->SetOptions(Options | FOS_FORCEFILESYSTEM | FOS_HIDEREADONLY);
+        // The modern dialog has no read-only checkbox, so there is no
+        // FOS_HIDEREADONLY (that flag only exists in the legacy OFN API).
+        Dialog->SetOptions(Options | FOS_FORCEFILESYSTEM);
       }
 
       Dialog->SetTitle(title);
@@ -263,7 +265,7 @@ bool MyGetOpenFileName(HWND hwnd, LPCWSTR title,
       _wsplitpath_s(buf, Drive, MAX_PATH, Dir, MAX_PATH, Name, MAX_PATH, nullptr, 0);
 
       WCHAR Folder[MAX_PATH * 2 + 1] = {};
-      lstrcpynW(Folder, initialDir ? initialDir : L"");
+      lstrcpynW(Folder, initialDir ? initialDir : L"", MAX_PATH * 2 + 1);
       if (Drive[0] != L'\0')
       {
         lstrcatW(Folder, Drive);
