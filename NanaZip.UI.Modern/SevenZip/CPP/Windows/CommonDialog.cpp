@@ -295,7 +295,7 @@ bool MyGetOpenFileName(HWND hwnd, LPCWSTR title,
         if (SUCCEEDED(Dialog->GetResult(&ResultItem)) && ResultItem)
         {
           PWSTR ResultPath = nullptr;
-          if (SUCCEEDED(ResultItem->GetPath(
+          if (SUCCEEDED(ResultItem->GetDisplayName(
               SIGDN_FILESYSPATH, &ResultPath)) && ResultPath)
           {
             resPath = ResultPath;
