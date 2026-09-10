@@ -455,13 +455,18 @@ bool CPanel::OnCreate(CREATESTRUCT * /* createStruct */)
       ::K7ModernRefreshTheme();
       // K7ModernRefreshTheme skips islands whose XAML content has not been
       // loaded yet ("no content"), so also re-apply when the content
-      // actually finishes loading.
-      XamlSource.Content().Loaded(
-          [](winrt::Windows::UI::Xaml::IInspectable const&,
-              winrt::Windows::UI::Xaml::RoutedEventArgs const&)
+      // actually finishes loading. Loaded is a FrameworkElement event, so
+      // query the content for FrameworkElement first.
+      if (auto ContentElement = XamlSource.Content().try_as<
+          winrt::Windows::UI::Xaml::FrameworkElement>())
       {
-          ::K7ModernRefreshTheme();
-      });
+          ContentElement.Loaded(
+              [](winrt::Windows::Foundation::IInspectable const&,
+                  winrt::Windows::UI::Xaml::RoutedEventArgs const&)
+          {
+              ::K7ModernRefreshTheme();
+          });
+      }
       // **************** NanaZip Modification End ******************
 
       XamlSource.TakeFocusRequested(
@@ -577,13 +582,18 @@ bool CPanel::OnCreate(CREATESTRUCT * /* createStruct */)
       // K7ModernRefreshTheme skips islands whose XAML content has not been
       // loaded yet ("no content"), so also re-apply when the content
       // actually finishes loading. This is essential for the status bar,
-      // whose content loads after the panel creation code runs.
-      XamlSource.Content().Loaded(
-          [](winrt::Windows::UI::Xaml::IInspectable const&,
-              winrt::Windows::UI::Xaml::RoutedEventArgs const&)
+      // whose content loads after the panel creation code runs. Loaded is a
+      // FrameworkElement event, so query the content for it first.
+      if (auto ContentElement = XamlSource.Content().try_as<
+          winrt::Windows::UI::Xaml::FrameworkElement>())
       {
-          ::K7ModernRefreshTheme();
-      });
+          ContentElement.Loaded(
+              [](winrt::Windows::Foundation::IInspectable const&,
+                  winrt::Windows::UI::Xaml::RoutedEventArgs const&)
+          {
+              ::K7ModernRefreshTheme();
+          });
+      }
       // **************** NanaZip Modification End ******************
 
       XamlSource.TakeFocusRequested(
