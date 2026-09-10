@@ -158,6 +158,42 @@ namespace
         return Result;
     }
 
+    // uxtheme ordinal 135 (SetPreferredAppMode). The Mile headers available
+    // in some build environments don't expose MILE_PREFERRED_APP_MODE_FORCE_DARK
+    // (enum values can't be guarded with #ifndef), so the undocumented export
+    // is called directly. This is the same export MileSetPreferredAppMode
+    // wraps; value 2 (ForceDark) is guaranteed by the uxtheme contract.
+    enum class K7PreferredAppMode : int
+    {
+        Default = 0,
+        AllowDark = 1,
+        ForceDark = 2,
+        ForceLight = 3,
+        Max = 4,
+    };
+
+    using K7SetPreferredAppModeType =
+        K7PreferredAppMode(WINAPI*)(K7PreferredAppMode);
+
+    static void K7SetPreferredAppMode(_In_ K7PreferredAppMode Mode)
+    {
+        static K7SetPreferredAppModeType Cached =
+            []() -> K7SetPreferredAppModeType
+        {
+            HMODULE Uxtheme = ::GetModuleHandleW(L"uxtheme.dll");
+            if (!Uxtheme)
+            {
+                return nullptr;
+            }
+            return reinterpret_cast<K7SetPreferredAppModeType>(
+                ::GetProcAddress(Uxtheme, MAKEINTRESOURCEA(135)));
+        }();
+        if (Cached)
+        {
+            Cached(Mode);
+        }
+    }
+
     static void ApplyProcessThemePolicy(
         _In_ bool ShouldUseDarkMode)
     {
@@ -171,10 +207,14 @@ namespace
         // light-on-light or dark-on-dark content. For the non-inverted cases
         // DARK/DEFAULT produce the same results as AUTO because
         // ShouldUseDarkMode is derived from the system setting there.
-        ::MileSetPreferredAppMode(
+        // System components which read the uxtheme ShouldAppsUseDarkMode
+        // export directly (e.g. the common file dialogs) only honor the
+        // forced modes, so FORCE_DARK is required on light-theme systems
+        // with the inverted theme enabled.
+        ::K7SetPreferredAppMode(
             ShouldUseDarkMode
-                ? MILE_PREFERRED_APP_MODE_FORCE_DARK
-                : MILE_PREFERRED_APP_MODE_DEFAULT);
+                ? K7PreferredAppMode::ForceDark
+                : K7PreferredAppMode::Default);
         ::MileRefreshImmersiveColorPolicyState();
         // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
         K7ThemeDebugTrace(
