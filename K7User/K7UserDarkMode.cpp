@@ -1132,9 +1132,10 @@ namespace
             DrawThemeBackgroundEx,
             OpenNcThemeData,
             GetThemeClass,
+            GetThemeSysColor,
 
             MaximumFunction
-        };
+            };
     }
 
     struct FunctionItem
@@ -1372,6 +1373,11 @@ namespace
         {
         case COLOR_WINDOW:
         case COLOR_BTNFACE:
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"GetSysColor(%d) -> dark",
+                nIndex);
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             return g_DarkModeBackgroundColor;
         case COLOR_WINDOWTEXT:
         case COLOR_BTNTEXT:
@@ -1397,6 +1403,47 @@ namespace
             return ::GetDarkModeForegroundBrush();
         default:
             return ::OriginalGetSysColorBrush(nIndex);
+        }
+    }
+
+    static COLORREF WINAPI OriginalGetThemeSysColor(
+        _In_ HTHEME hTheme,
+        _In_ int iColorId)
+    {
+        using FunctionType = decltype(::GetThemeSysColor)*;
+        auto Original = reinterpret_cast<FunctionType>(
+            g_FunctionTable[FunctionTypes::GetThemeSysColor].Original);
+        return Original(hTheme, iColorId);
+    }
+
+    // The DirectUI content inside common file dialogs draws its list
+    // background with GetThemeSysColor instead of GetSysColor, which left
+    // the file list white in dark mode. Route the same system colors to the
+    // dark palette here.
+    static COLORREF WINAPI DetouredGetThemeSysColor(
+        _In_ HTHEME hTheme,
+        _In_ int iColorId)
+    {
+        if (!g_GlobalInitialized || !ShouldAppsUseDarkMode())
+        {
+            return ::OriginalGetThemeSysColor(hTheme, iColorId);
+        }
+
+        switch (iColorId)
+        {
+        case COLOR_WINDOW:
+        case COLOR_BTNFACE:
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"GetThemeSysColor(%d) -> dark",
+                iColorId);
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+            return g_DarkModeBackgroundColor;
+        case COLOR_WINDOWTEXT:
+        case COLOR_BTNTEXT:
+            return g_DarkModeForegroundColor;
+        default:
+            return ::OriginalGetThemeSysColor(hTheme, iColorId);
         }
     }
 
@@ -2069,6 +2116,11 @@ namespace
                 }
             }
         }
+
+        g_FunctionTable[FunctionTypes::GetThemeSysColor].Original =
+            ::GetThemeSysColor;
+        g_FunctionTable[FunctionTypes::GetThemeSysColor].Detoured =
+            ::DetouredGetThemeSysColor;
 
         return true;
     }
