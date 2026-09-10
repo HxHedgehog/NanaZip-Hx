@@ -216,6 +216,15 @@ HRESULT CApp::Create(HWND hwnd, const UString &mainPath, const UString &arcForma
       // exists, so islands start with the default theme. Apply the current
       // theme to every island created so far right after creation.
       ::K7ModernRefreshTheme();
+      // K7ModernRefreshTheme skips islands whose XAML content has not been
+      // loaded yet ("no content"), so also re-apply when the content
+      // actually finishes loading.
+      XamlSource.Content().Loaded(
+          [](winrt::Windows::UI::Xaml::IInspectable const&,
+              winrt::Windows::UI::Xaml::RoutedEventArgs const&)
+      {
+          ::K7ModernRefreshTheme();
+      });
       // **************** NanaZip Modification End ******************
 
       XamlSource.TakeFocusRequested(

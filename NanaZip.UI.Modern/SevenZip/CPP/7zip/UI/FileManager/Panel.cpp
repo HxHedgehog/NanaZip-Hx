@@ -453,6 +453,15 @@ bool CPanel::OnCreate(CREATESTRUCT * /* createStruct */)
       // Apply the current theme to every island created so far right after
       // creation (global Application.RequestedTheme cannot be set at runtime).
       ::K7ModernRefreshTheme();
+      // K7ModernRefreshTheme skips islands whose XAML content has not been
+      // loaded yet ("no content"), so also re-apply when the content
+      // actually finishes loading.
+      XamlSource.Content().Loaded(
+          [](winrt::Windows::UI::Xaml::IInspectable const&,
+              winrt::Windows::UI::Xaml::RoutedEventArgs const&)
+      {
+          ::K7ModernRefreshTheme();
+      });
       // **************** NanaZip Modification End ******************
 
       XamlSource.TakeFocusRequested(
@@ -565,6 +574,16 @@ bool CPanel::OnCreate(CREATESTRUCT * /* createStruct */)
       // Apply the current theme to every island created so far right after
       // creation (global Application.RequestedTheme cannot be set at runtime).
       ::K7ModernRefreshTheme();
+      // K7ModernRefreshTheme skips islands whose XAML content has not been
+      // loaded yet ("no content"), so also re-apply when the content
+      // actually finishes loading. This is essential for the status bar,
+      // whose content loads after the panel creation code runs.
+      XamlSource.Content().Loaded(
+          [](winrt::Windows::UI::Xaml::IInspectable const&,
+              winrt::Windows::UI::Xaml::RoutedEventArgs const&)
+      {
+          ::K7ModernRefreshTheme();
+      });
       // **************** NanaZip Modification End ******************
 
       XamlSource.TakeFocusRequested(

@@ -406,7 +406,26 @@ namespace
                 (0 == std::wcscmp(ClassName, WC_COMBOBOXW)) ||
                 (0 == std::wcscmp(ClassName, WC_EDITW)))
             {
-                ::SetWindowTheme(WindowHandle, L"CFD", nullptr);
+                // "CFD" alone is not a real theme class, so the previous
+                // unconditional SetWindowTheme(L"CFD") silently failed and
+                // combo boxes kept rendering with the light ComboBox class.
+                // The dark variants follow the same naming convention as
+                // DarkMode_Explorer. They must only be applied while the
+                // inverted theme is active, otherwise freshly created
+                // controls would stay dark after switching back to light.
+                if (ShouldAppsUseDarkMode())
+                {
+                    ::SetWindowTheme(
+                        WindowHandle,
+                        (0 == std::wcscmp(ClassName, WC_COMBOBOXW))
+                            ? L"DarkMode_CFD"
+                            : L"DarkMode_Explorer",
+                        nullptr);
+                }
+                else
+                {
+                    ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                }
                 ::MileAllowDarkModeForWindow(WindowHandle, TRUE);
             }
             else if (0 == std::wcscmp(ClassName, WC_HEADERW))
@@ -615,6 +634,19 @@ namespace
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORBTN:
         {
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            {
+                wchar_t ParentClassName[256] = {};
+                ::GetClassNameW(hWnd, ParentClassName, 256);
+                K7ThemeDebugTrace(
+                    L"CTLCOLOR: msg=%08X parent=%08X (%s) child=%08X dark=%d",
+                    (unsigned)uMsg,
+                    (DWORD)(DWORD_PTR)hWnd,
+                    ParentClassName,
+                    (DWORD)(DWORD_PTR)lParam,
+                    (int)ShouldAppsUseDarkMode());
+            }
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             HDC DeviceContextHandle = reinterpret_cast<HDC>(wParam);
             if (DeviceContextHandle)
             {
