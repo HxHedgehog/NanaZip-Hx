@@ -432,6 +432,24 @@ namespace
             {
                 ::SetWindowTheme(WindowHandle, L"ItemsView", nullptr);
             }
+            else if (0 == std::wcscmp(ClassName, WC_TREEVIEWW))
+            {
+                // The namespace tree inside the common file dialogs (and any
+                // other tree view) keeps rendering with the light Explorer
+                // theme unless the dark variant is requested explicitly.
+                if (ShouldAppsUseDarkMode())
+                {
+                    ::SetWindowTheme(WindowHandle, L"DarkMode_Explorer", nullptr);
+                    ::TreeView_SetBkColor(WindowHandle, g_DarkModeBackgroundColor);
+                    ::TreeView_SetTextColor(WindowHandle, g_DarkModeForegroundColor);
+                }
+                else
+                {
+                    ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                    ::TreeView_SetBkColor(WindowHandle, CLR_DEFAULT);
+                    ::TreeView_SetTextColor(WindowHandle, CLR_DEFAULT);
+                }
+            }
             else if (0 == std::wcscmp(ClassName, WC_LISTVIEWW))
             {
                 ::SetWindowTheme(WindowHandle, L"ItemsView", nullptr);
@@ -1489,14 +1507,15 @@ namespace
                 hTheme,
                 ClassName,
                 MO_ARRAY_SIZE(ClassName))) ||
-                0 != ::_wcsicmp(ClassName, L"Toolbar"))
+                (0 != ::_wcsicmp(ClassName, L"Toolbar") &&
+                    0 != ::_wcsicmp(ClassName, L"Menu")))
             {
                 // On a light system forced into dark mode, uxtheme hands out
                 // light theme data, so callers resolving the theme text color
                 // directly get a dark color which is unreadable on the dark
                 // backgrounds we draw. Mirror the native dark theme behavior
-                // by providing white. The toolbar is excluded because its
-                // button plates stay light there.
+                // by providing white. The toolbar and menus are excluded
+                // because their backgrounds stay light there.
                 *pColor = g_DarkModeForegroundColor;
             }
         }
@@ -1537,8 +1556,11 @@ namespace
 
         // The toolbar keeps its own light button plates on a light system
         // forced into dark mode, so its text has to keep the original (dark)
-        // color to stay readable on those plates.
-        return (0 == ::_wcsicmp(ClassName, L"Toolbar"));
+        // color to stay readable on those plates. Context menus ("Menu"
+        // class) keep the system-provided (light) background there as well,
+        // so forcing white text on them produced white-on-white menus.
+        return (0 == ::_wcsicmp(ClassName, L"Toolbar")) ||
+            (0 == ::_wcsicmp(ClassName, L"Menu"));
     }
 
     static HRESULT WINAPI DetouredDrawThemeText(
