@@ -1506,8 +1506,16 @@ namespace
             if (FAILED(::OriginalGetThemeClass(
                 hTheme,
                 ClassName,
-                MO_ARRAY_SIZE(ClassName))) ||
-                0 != ::_wcsicmp(ClassName, L"Menu"))
+                MO_ARRAY_SIZE(ClassName))))
+            {
+                *pColor = g_DarkModeForegroundColor;
+            }
+            else if (0 == std::wcsncmp(ClassName, L"DarkMode_", 9))
+            {
+                // Native dark theme data opened through the DarkMode_
+                // class redirect: keep the native color untouched.
+            }
+            else if (0 != ::_wcsicmp(ClassName, L"Menu"))
             {
                 // On a light system forced into dark mode, uxtheme hands out
                 // light theme data, so callers resolving the theme text color
@@ -1527,11 +1535,12 @@ namespace
                 FillClassName,
                 MO_ARRAY_SIZE(FillClassName))))
             {
-                // Menus keep the system-provided light background, so they
-                // must keep the light fill color to stay consistent with
-                // their (non-forced) text. The toolbar is no longer exempt:
-                // its plates are drawn dark now.
-                FillExempt = (0 == ::_wcsicmp(FillClassName, L"Menu"));
+                // Native dark theme data keeps its own (already dark) fill
+                // colors, and menus keep the system-provided light
+                // background on a light system forced into dark mode.
+                FillExempt =
+                    (0 == std::wcsncmp(FillClassName, L"DarkMode_", 9)) ||
+                    (0 == ::_wcsicmp(FillClassName, L"Menu"));
             }
 
             // DirectUI surfaces inside the common file dialogs (file list,
@@ -1568,11 +1577,19 @@ namespace
             return false;
         }
 
+        // Native dark theme data opened through the DarkMode_ class
+        // redirect keeps its own (already light) text color, so no forcing
+        // is needed there either.
+        if (0 == std::wcsncmp(ClassName, L"DarkMode_", 9))
+        {
+            return true;
+        }
+
         // Menus keep the system-provided (light) background on a light
         // system forced into dark mode, so forcing white text on them
         // produced white-on-white menus. The toolbar is no longer exempt:
         // its plates are drawn dark by our DrawThemeBackground handler, so
-        // its text has to turn white as well.
+        // its text has to turn white too.
         return (0 == ::_wcsicmp(ClassName, L"Menu"));
     }
 
@@ -2157,7 +2174,50 @@ namespace
         // Workaround for dark mode scrollbar
         if (0 == std::wcscmp(pszClassList, L"ScrollBar"))
         {
-            return ::OriginalOpenNcThemeData(nullptr, L"Explorer::ScrollBar");
+            return ::DetouredOpenNcThemeData(
+                nullptr,
+                L"Explorer::ScrollBar");
+        }
+
+        // Redirect every theme class to its built-in DarkMode_ variant.
+        // Since Windows 10 1803, aero.msstyles contains a complete set of
+        // dark theme classes (DarkMode_Explorer, DarkMode_ItemsView,
+        // DarkMode_Toolbar, ...) which the system shell uses for its own
+        // dark mode. Opening the dark variant here makes every subsequent
+        // DrawThemeBackground/GetThemeColor/DrawThemeText call render with
+        // native dark theme data at once - without per-class patching.
+        // Classes without a DarkMode_ variant simply fail to open and fall
+        // back to the original class, where the hand-drawn overrides in
+        // DetouredDrawThemeBackground take over.
+        if (g_GlobalInitialized &&
+            ShouldAppsUseDarkMode() &&
+            pszClassList &&
+            L'\0' != pszClassList[0] &&
+            0 != std::wcsncmp(pszClassList, L"DarkMode_", 9) &&
+            nullptr == std::wcschr(pszClassList, L';'))
+        {
+            wchar_t DarkClassList[256] = {};
+            HRESULT hr = ::StringCchPrintfW(
+                DarkClassList,
+                MO_ARRAY_SIZE(DarkClassList),
+                L"DarkMode_%s",
+                pszClassList);
+            if (SUCCEEDED(hr))
+            {
+                HTHEME DarkTheme = ::OriginalOpenNcThemeData(
+                    hwnd,
+                    DarkClassList);
+                // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+                K7ThemeDebugTrace(
+                    L"OpenNcThemeData class=%ws -> DarkMode variant %s",
+                    pszClassList,
+                    (DarkTheme ? L"HIT" : L"MISS"));
+                // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+                if (DarkTheme)
+                {
+                    return DarkTheme;
+                }
+            }
         }
 
         return ::OriginalOpenNcThemeData(hwnd, pszClassList);
