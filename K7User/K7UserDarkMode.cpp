@@ -440,14 +440,14 @@ namespace
                 if (ShouldAppsUseDarkMode())
                 {
                     ::SetWindowTheme(WindowHandle, L"DarkMode_Explorer", nullptr);
-                    ::TreeView_SetBkColor(WindowHandle, g_DarkModeBackgroundColor);
-                    ::TreeView_SetTextColor(WindowHandle, g_DarkModeForegroundColor);
+                    TreeView_SetBkColor(WindowHandle, g_DarkModeBackgroundColor);
+                    TreeView_SetTextColor(WindowHandle, g_DarkModeForegroundColor);
                 }
                 else
                 {
                     ::SetWindowTheme(WindowHandle, nullptr, nullptr);
-                    ::TreeView_SetBkColor(WindowHandle, CLR_DEFAULT);
-                    ::TreeView_SetTextColor(WindowHandle, CLR_DEFAULT);
+                    TreeView_SetBkColor(WindowHandle, CLR_DEFAULT);
+                    TreeView_SetTextColor(WindowHandle, CLR_DEFAULT);
                 }
             }
             else if (0 == std::wcscmp(ClassName, WC_LISTVIEWW))
