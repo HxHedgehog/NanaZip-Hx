@@ -1507,15 +1507,14 @@ namespace
                 hTheme,
                 ClassName,
                 MO_ARRAY_SIZE(ClassName))) ||
-                (0 != ::_wcsicmp(ClassName, L"Toolbar") &&
-                    0 != ::_wcsicmp(ClassName, L"Menu")))
+                0 != ::_wcsicmp(ClassName, L"Menu"))
             {
                 // On a light system forced into dark mode, uxtheme hands out
                 // light theme data, so callers resolving the theme text color
                 // directly get a dark color which is unreadable on the dark
                 // backgrounds we draw. Mirror the native dark theme behavior
-                // by providing white. The toolbar and menus are excluded
-                // because their backgrounds stay light there.
+                // by providing white. Menus are excluded because their
+                // backgrounds stay light there.
                 *pColor = g_DarkModeForegroundColor;
             }
         }
@@ -1528,12 +1527,11 @@ namespace
                 FillClassName,
                 MO_ARRAY_SIZE(FillClassName))))
             {
-                // Toolbar keeps light button plates and menus keep the
-                // system-provided light background, so they must keep the
-                // light fill color to stay consistent with their text.
-                FillExempt =
-                    (0 == ::_wcsicmp(FillClassName, L"Toolbar")) ||
-                    (0 == ::_wcsicmp(FillClassName, L"Menu"));
+                // Menus keep the system-provided light background, so they
+                // must keep the light fill color to stay consistent with
+                // their (non-forced) text. The toolbar is no longer exempt:
+                // its plates are drawn dark now.
+                FillExempt = (0 == ::_wcsicmp(FillClassName, L"Menu"));
             }
 
             // DirectUI surfaces inside the common file dialogs (file list,
@@ -1570,13 +1568,12 @@ namespace
             return false;
         }
 
-        // The toolbar keeps its own light button plates on a light system
-        // forced into dark mode, so its text has to keep the original (dark)
-        // color to stay readable on those plates. Context menus ("Menu"
-        // class) keep the system-provided (light) background there as well,
-        // so forcing white text on them produced white-on-white menus.
-        return (0 == ::_wcsicmp(ClassName, L"Toolbar")) ||
-            (0 == ::_wcsicmp(ClassName, L"Menu"));
+        // Menus keep the system-provided (light) background on a light
+        // system forced into dark mode, so forcing white text on them
+        // produced white-on-white menus. The toolbar is no longer exempt:
+        // its plates are drawn dark by our DrawThemeBackground handler, so
+        // its text has to turn white as well.
+        return (0 == ::_wcsicmp(ClassName, L"Menu"));
     }
 
     static HRESULT WINAPI DetouredDrawThemeText(
@@ -1766,6 +1763,23 @@ namespace
                 pRect,
                 pClipRect);
         }
+
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        {
+            wchar_t BgClassName[256] = {};
+            if (SUCCEEDED(::OriginalGetThemeClass(
+                hTheme,
+                BgClassName,
+                MO_ARRAY_SIZE(BgClassName))))
+            {
+                K7ThemeDebugTrace(
+                    L"DrawThemeBackground class=%ws part=%d state=%d",
+                    BgClassName,
+                    iPartId,
+                    iStateId);
+            }
+        }
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
 
         // The class names are resolved through GetThemeClass instead of
         // comparing cached theme handles, because the handles are per-window
@@ -2006,6 +2020,36 @@ namespace
             default:
                 break;
             }
+        }
+        else if (::IsThemeClass(hTheme, L"Toolbar"))
+        {
+            // The command toolbars (the "Organize / New folder" row inside
+            // the common file dialogs and the File Manager main toolbar)
+            // keep their light plates otherwise, which clashes with the
+            // dark surfaces around them. All toolbar parts are plain
+            // background surfaces for the dark look.
+            ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
+            return S_OK;
+        }
+        else if (::IsThemeClass(hTheme, L"Edit"))
+        {
+            // Edit borders (1 = EP_EDITTEXT, 2-5 = the no-scroll / h-scroll
+            // / v-scroll / hv-scroll border variants used e.g. by the search
+            // box) fall back to light gradient bitmaps otherwise.
+            ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
+            ::FrameRect(
+                hdc,
+                pRect,
+                (4 == iStateId) // ETS_DISABLED
+                    ? ::GetDarkModeMenuSelectedBackgroundBrush()
+                    : ::GetDarkModeBorderBrush());
+            return S_OK;
+        }
+        else if (::IsThemeClass(hTheme, L"SearchBox"))
+        {
+            ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
+            ::FrameRect(hdc, pRect, ::GetDarkModeBorderBrush());
+            return S_OK;
         }
 
         return ::OriginalDrawThemeBackground(
