@@ -1493,6 +1493,25 @@ namespace
                 *pColor = g_DarkModeForegroundColor;
             }
         }
+        else if (TMT_FILLCOLOR == iPropId)
+        {
+            if (::IsThemeClass(hTheme, L"ItemsView") ||
+                ::IsThemeClass(hTheme, L"Header"))
+            {
+                // The DirectUI list inside the common file dialogs resolves
+                // its background via GetThemeColor(ItemsView, ...,
+                // TMT_FILLCOLOR) and never calls DrawThemeBackground for it
+                // (verified with the debug trace), so the list stayed white.
+                // Provide the dark background fill color.
+                // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+                K7ThemeDebugTrace(
+                    L"GetThemeColor FILLCOLOR ItemsView/Header part=%d state=%d -> dark",
+                    iPartId,
+                    iStateId);
+                // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+                *pColor = g_DarkModeBackgroundColor;
+            }
+        }
 
         return S_OK;
     }
