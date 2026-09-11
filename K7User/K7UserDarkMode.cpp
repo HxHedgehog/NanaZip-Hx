@@ -1521,20 +1521,36 @@ namespace
         }
         else if (TMT_FILLCOLOR == iPropId)
         {
-            if (::IsThemeClass(hTheme, L"ItemsView") ||
-                ::IsThemeClass(hTheme, L"Header"))
+            wchar_t FillClassName[256] = {};
+            bool FillExempt = false;
+            if (SUCCEEDED(::OriginalGetThemeClass(
+                hTheme,
+                FillClassName,
+                MO_ARRAY_SIZE(FillClassName))))
             {
-                // The DirectUI list inside the common file dialogs resolves
-                // its background via GetThemeColor(ItemsView, ...,
-                // TMT_FILLCOLOR) and never calls DrawThemeBackground for it
-                // (verified with the debug trace), so the list stayed white.
-                // Provide the dark background fill color.
-                // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-                K7ThemeDebugTrace(
-                    L"GetThemeColor FILLCOLOR ItemsView/Header part=%d state=%d -> dark",
-                    iPartId,
-                    iStateId);
-                // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+                // Toolbar keeps light button plates and menus keep the
+                // system-provided light background, so they must keep the
+                // light fill color to stay consistent with their text.
+                FillExempt =
+                    (0 == ::_wcsicmp(FillClassName, L"Toolbar")) ||
+                    (0 == ::_wcsicmp(FillClassName, L"Menu"));
+            }
+
+            // DirectUI surfaces inside the common file dialogs (file list,
+            // namespace tree) resolve their background via GetThemeColor
+            // TMT_FILLCOLOR with various class names and never call
+            // DrawThemeBackground for it (verified with the debug trace).
+            // Provide the dark background fill color for all of them.
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"GetThemeColor FILLCOLOR class=%ws part=%d state=%d exempt=%d",
+                FillClassName,
+                iPartId,
+                iStateId,
+                (int)FillExempt);
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+            if (!FillExempt)
+            {
                 *pColor = g_DarkModeBackgroundColor;
             }
         }
