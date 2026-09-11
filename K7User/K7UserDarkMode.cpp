@@ -1447,6 +1447,13 @@ namespace
         }
     }
 
+    // Forward declaration: DetouredGetThemeColor resolves theme class names
+    // through this helper, whose definition appears further down next to
+    // the other Original* wrappers.
+    static bool IsThemeClass(
+        _In_ HTHEME hTheme,
+        _In_z_ LPCWSTR ExpectedClassName);
+
     static HRESULT WINAPI DetouredGetThemeColor(
         _In_ HTHEME hTheme,
         _In_ int iPartId,
@@ -1686,13 +1693,6 @@ namespace
             lprc,
             OptionPointer);
     }
-
-    // Forward declaration: DetouredGetThemeColor (defined earlier in this
-    // file) resolves theme class names through this helper, whose definition
-    // appears further down next to the other Original* wrappers.
-    static bool IsThemeClass(
-        _In_ HTHEME hTheme,
-        _In_z_ LPCWSTR ExpectedClassName);
 
     static bool IsThemeClass(
         _In_ HTHEME hTheme,
