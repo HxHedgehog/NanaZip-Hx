@@ -2197,12 +2197,12 @@ namespace
             nullptr == std::wcschr(pszClassList, L';'))
         {
             wchar_t DarkClassList[256] = {};
-            HRESULT hr = ::StringCchPrintfW(
+            int Length = ::swprintf_s(
                 DarkClassList,
                 MO_ARRAY_SIZE(DarkClassList),
                 L"DarkMode_%s",
                 pszClassList);
-            if (SUCCEEDED(hr))
+            if (0 < Length)
             {
                 HTHEME DarkTheme = ::OriginalOpenNcThemeData(
                     hwnd,
