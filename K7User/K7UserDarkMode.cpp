@@ -1929,11 +1929,28 @@ namespace
             MO_ARRAY_SIZE(BgClassName))))
         {
             // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            K7ThemeDebugTrace(
-                L"DrawThemeBackground class=%ws part=%d state=%d",
-                BgClassName,
-                iPartId,
-                iStateId);
+            {
+                wchar_t TargetWindowClassName[64] = {};
+                HWND TargetWindow = ::WindowFromDC(hdc);
+                if (nullptr == TargetWindow ||
+                    0 == ::GetClassNameW(
+                        TargetWindow,
+                        TargetWindowClassName,
+                        MO_ARRAY_SIZE(TargetWindowClassName)))
+                {
+                    ::lstrcpynW(
+                        TargetWindowClassName,
+                        L"<unknown>",
+                        MO_ARRAY_SIZE(TargetWindowClassName));
+                }
+                K7ThemeDebugTrace(
+                    L"DrawThemeBackground class=%ws part=%d state=%d hwnd=%p win=%ws",
+                    BgClassName,
+                    iPartId,
+                    iStateId,
+                    TargetWindow,
+                    TargetWindowClassName);
+            }
             // *** END TEMPORARY DEBUG INSTRUMENTATION ***
         }
 
