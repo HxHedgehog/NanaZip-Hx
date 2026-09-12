@@ -1519,6 +1519,9 @@ namespace
         _In_ HTHEME hTheme,
         _In_z_ LPCWSTR ExpectedClassName);
 
+    static bool IsDarkBackgroundThemeClass(
+        _In_z_ LPCWSTR ClassName);
+
     static HRESULT WINAPI DetouredGetThemeColor(
         _In_ HTHEME hTheme,
         _In_ int iPartId,
