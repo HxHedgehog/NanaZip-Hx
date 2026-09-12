@@ -1562,14 +1562,16 @@ namespace
                 // Native dark theme data opened through the DarkMode_
                 // class redirect: keep the native color untouched.
             }
-            else if (0 != ::_wcsicmp(ClassName, L"Menu"))
+            else if (
+                (nullptr == std::wcsstr(ClassName, L"::")) &&
+                IsDarkBackgroundThemeClass(ClassName))
             {
-                // On a light system forced into dark mode, uxtheme hands out
-                // light theme data, so callers resolving the theme text color
-                // directly get a dark color which is unreadable on the dark
-                // backgrounds we draw. Mirror the native dark theme behavior
-                // by providing white. Menus are excluded because their
-                // backgrounds stay light there.
+                // Light theme data of a class whose background we draw dark:
+                // force white so the text stays readable. Compound classes
+                // ("A::B", used by the system common file dialogs with their
+                // own light backgrounds) and menus are excluded - their
+                // backgrounds stay light there, so the native dark text
+                // color is the readable one.
                 *pColor = g_DarkModeForegroundColor;
             }
         }
@@ -1612,6 +1614,45 @@ namespace
         return S_OK;
     }
 
+    // Classes whose backgrounds are drawn dark by our DrawThemeBackground
+    // handler (or which get a dark fill via GetThemeColor TMT_FILLCOLOR).
+    // Their theme text must be forced to white on a light system forced
+    // into dark mode, because uxtheme would otherwise hand out light theme
+    // data with dark text colors.
+    static bool IsDarkBackgroundThemeClass(
+        _In_z_ LPCWSTR ClassName)
+    {
+        static const LPCWSTR DarkClasses[] =
+        {
+            L"ItemsView",
+            L"Header",
+            L"Explorer",
+            L"Button",
+            L"TaskDialog",
+            L"Tab",
+            L"StatusBar",
+            L"Tooltip",
+            L"Toolbar",
+            L"Edit",
+            L"Combobox",
+            L"REBAR",
+            L"SearchBox",
+            L"SearchEditBox",
+            L"BreadcrumbBar",
+            L"TextStyle",
+            L"Link",
+            L"Progress",
+        };
+        for (LPCWSTR DarkClass : DarkClasses)
+        {
+            if (0 == ::_wcsicmp(ClassName, DarkClass))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static bool IsToolbarThemeText(
         _In_ HTHEME hTheme)
     {
@@ -1625,19 +1666,27 @@ namespace
         }
 
         // Native dark theme data opened through the DarkMode_ class
-        // redirect keeps its own (already light) text color, so no forcing
-        // is needed there either.
+        // redirect keeps its own (already correct) text color, so no forcing
+        // is needed there.
         if (0 == std::wcsncmp(ClassName, L"DarkMode_", 9))
         {
             return true;
         }
 
         // Menus keep the system-provided (light) background on a light
-        // system forced into dark mode, so forcing white text on them
-        // produced white-on-white menus. The toolbar is no longer exempt:
-        // its plates are drawn dark by our DrawThemeBackground handler, so
-        // its text has to turn white too.
-        return (0 == ::_wcsicmp(ClassName, L"Menu"));
+        // system forced into dark mode, and compound classes ("A::B") belong
+        // to the system common file dialogs whose backgrounds stay light
+        // there too - their native dark text color is the readable one.
+        if (0 == ::_wcsicmp(ClassName, L"Menu") ||
+            nullptr != std::wcsstr(ClassName, L"::"))
+        {
+            return true;
+        }
+
+        // Everything else: only force white when we also draw the
+        // background of that class dark, so light-background surfaces
+        // keep their readable dark text.
+        return !IsDarkBackgroundThemeClass(ClassName);
     }
 
     static HRESULT WINAPI DetouredDrawThemeText(
@@ -1664,6 +1713,29 @@ namespace
                 dwTextFlags2,
                 pRect);
         }
+
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        {
+            wchar_t TraceClassName[256] = {};
+            if (SUCCEEDED(::OriginalGetThemeClass(
+                hTheme,
+                TraceClassName,
+                MO_ARRAY_SIZE(TraceClassName))))
+            {
+                wchar_t TextPreview[17] = {};
+                for (int Ti = 0; (Ti < 16) && (Ti < cchText); ++Ti)
+                {
+                    TextPreview[Ti] = pszText[Ti];
+                }
+                K7ThemeDebugTrace(
+                    L"DrawThemeText class=%ws part=%d state=%d text=%ws",
+                    TraceClassName,
+                    iPartId,
+                    iStateId,
+                    TextPreview);
+            }
+        }
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
 
         if (IsToolbarThemeText(hTheme))
         {
