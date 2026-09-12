@@ -1522,6 +1522,9 @@ namespace
     static bool IsDarkBackgroundThemeClass(
         _In_z_ LPCWSTR ClassName);
 
+    static bool IsDarkTextThemeClass(
+        _In_z_ LPCWSTR ClassName);
+
     static HRESULT WINAPI DetouredGetThemeColor(
         _In_ HTHEME hTheme,
         _In_ int iPartId,
@@ -1565,16 +1568,13 @@ namespace
                 // Native dark theme data opened through the DarkMode_
                 // class redirect: keep the native color untouched.
             }
-            else if (
-                (nullptr == std::wcsstr(ClassName, L"::")) &&
-                IsDarkBackgroundThemeClass(ClassName))
+            else if (IsDarkTextThemeClass(ClassName))
             {
-                // Light theme data of a class whose background we draw dark:
-                // force white so the text stays readable. Compound classes
-                // ("A::B", used by the system common file dialogs with their
-                // own light backgrounds) and menus are excluded - their
-                // backgrounds stay light there, so the native dark text
-                // color is the readable one.
+                // Light theme data of a class whose background we draw dark
+                // (or darken via TMT_FILLCOLOR): force white so the text
+                // stays readable. Native dark data and menus are excluded
+                // above, and compound classes not in the whitelist keep
+                // their light backgrounds with readable dark text.
                 *pColor = g_DarkModeForegroundColor;
             }
         }
@@ -1645,6 +1645,14 @@ namespace
             L"TextStyle",
             L"Link",
             L"Progress",
+            // Additional classes whose backgrounds get darkened by the
+            // GetThemeColor TMT_FILLCOLOR rule below (DirectUI surfaces in
+            // the common file dialogs), so their self-drawn text turns white
+            // as well.
+            L"ExplorerNavPane",
+            L"TreeView",
+            L"ReadingPane",
+            L"ProperTree",
         };
         for (LPCWSTR DarkClass : DarkClasses)
         {
@@ -1654,6 +1662,30 @@ namespace
             }
         }
         return false;
+    }
+
+    // Compound class lists ("A::B") belong to the system common file
+    // dialogs. Most of them keep light backgrounds there, so their native
+    // dark text color stays readable and forcing white would produce
+    // white-on-white. These two are the exceptions: their backgrounds are
+    // darkened by our TMT_FILLCOLOR rule / header drawing handler, so their
+    // text must be forced to white as well.
+    static bool IsDarkTextThemeClass(
+        _In_z_ LPCWSTR ClassName)
+    {
+        if (0 == std::wcsncmp(ClassName, L"DarkMode_", 9) ||
+            0 == ::_wcsicmp(ClassName, L"Menu"))
+        {
+            return false;
+        }
+
+        if (nullptr != std::wcsstr(ClassName, L"::"))
+        {
+            return (0 == ::_wcsicmp(ClassName, L"ItemsView::Header") ||
+                    0 == ::_wcsicmp(ClassName, L"ItemsView::ListView"));
+        }
+
+        return IsDarkBackgroundThemeClass(ClassName);
     }
 
     static bool IsToolbarThemeText(
@@ -1668,28 +1700,13 @@ namespace
             return false;
         }
 
-        // Native dark theme data opened through the DarkMode_ class
-        // redirect keeps its own (already correct) text color, so no forcing
-        // is needed there.
-        if (0 == std::wcsncmp(ClassName, L"DarkMode_", 9))
-        {
-            return true;
-        }
-
-        // Menus keep the system-provided (light) background on a light
-        // system forced into dark mode, and compound classes ("A::B") belong
-        // to the system common file dialogs whose backgrounds stay light
-        // there too - their native dark text color is the readable one.
-        if (0 == ::_wcsicmp(ClassName, L"Menu") ||
-            nullptr != std::wcsstr(ClassName, L"::"))
-        {
-            return true;
-        }
-
-        // Everything else: only force white when we also draw the
-        // background of that class dark, so light-background surfaces
-        // keep their readable dark text.
-        return !IsDarkBackgroundThemeClass(ClassName);
+        // Exempt (= true, keep the native text color) exactly when the
+        // unified dark-text rule says no forcing is needed: native dark
+        // theme data, menus, compound classes with light backgrounds, and
+        // single classes whose backgrounds stay light. Everything else
+        // (dark-background classes, incl. the whitelisted compounds) gets
+        // its text forced to white.
+        return !IsDarkTextThemeClass(ClassName);
     }
 
     static HRESULT WINAPI DetouredDrawThemeText(
@@ -1903,22 +1920,22 @@ namespace
                 pClipRect);
         }
 
-        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        // Resolve the class name once for both the debug trace and the
+        // compound-class matches below.
+        wchar_t BgClassName[256] = {};
+        if (SUCCEEDED(::OriginalGetThemeClass(
+            hTheme,
+            BgClassName,
+            MO_ARRAY_SIZE(BgClassName))))
         {
-            wchar_t BgClassName[256] = {};
-            if (SUCCEEDED(::OriginalGetThemeClass(
-                hTheme,
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"DrawThemeBackground class=%ws part=%d state=%d",
                 BgClassName,
-                MO_ARRAY_SIZE(BgClassName))))
-            {
-                K7ThemeDebugTrace(
-                    L"DrawThemeBackground class=%ws part=%d state=%d",
-                    BgClassName,
-                    iPartId,
-                    iStateId);
-            }
+                iPartId,
+                iStateId);
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
         }
-        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
 
         // The class names are resolved through GetThemeClass instead of
         // comparing cached theme handles, because the handles are per-window
@@ -2031,7 +2048,9 @@ namespace
         }
         else if (
             IsThemeClass(hTheme, L"ItemsView") ||
-            IsThemeClass(hTheme, L"Header"))
+            IsThemeClass(hTheme, L"Header") ||
+            0 == ::_wcsicmp(BgClassName, L"ItemsView::Header") ||
+            0 == ::_wcsicmp(BgClassName, L"ItemsView::ListView"))
         {
             // Header items and list view item backgrounds. Part 1 covers
             // HP_HEADERITEM as well as LVP_LISTITEM; parts 2-4 cover the
