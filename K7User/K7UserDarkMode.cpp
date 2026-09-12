@@ -2214,47 +2214,78 @@ namespace
             nullptr);
     }
 
-    // Redirect a theme class to its built-in DarkMode_ variant.
-    // Since Windows 10 1803, aero.msstyles contains a complete set of dark
-    // theme classes (DarkMode_Explorer, DarkMode_ItemsView, DarkMode_Toolbar,
-    // ...) which the system shell uses for its own dark mode. Opening the
-    // dark variant here makes every subsequent DrawThemeBackground /
-    // GetThemeColor / DrawThemeText call render with native dark theme data
-    // at once - without per-class patching. Classes without a DarkMode_
-    // variant simply fail to open and fall back to the original class, where
-    // the hand-drawn overrides in DetouredDrawThemeBackground take over.
-    // Returns nullptr when no redirect applies (light mode, already dark
-    // class list, compound lists, or missing variant).
+    // Redirect selected theme classes to their built-in dark variants.
+    // Since Windows 10 1803 the system theme file contains dark classes,
+    // but unlike the compound forms used by the shell itself they only exist
+    // for a few class names. Mapping is restricted to a whitelist of classes
+    // verified to open successfully on Windows 10 (log: HIT entries), and
+    // compound class lists ("A::B") are never touched, so system dialogs
+    // (comdlg32 / IFileDialog internals) keep their own theme data.
+    // Everything else (Button, Toolbar, ItemsView, ...) falls through to
+    // the hand-drawn overrides in DetouredDrawThemeBackground.
+    // Returns nullptr when no redirect applies.
     static HTHEME TryOpenDarkModeThemeData(
         _In_opt_ HWND hwnd,
         _In_ LPCWSTR pszClassList)
     {
-        if (g_GlobalInitialized &&
-            ShouldAppsUseDarkMode() &&
-            pszClassList &&
-            L'\0' != pszClassList[0] &&
-            0 != std::wcsncmp(pszClassList, L"DarkMode_", 9) &&
-            nullptr == std::wcschr(pszClassList, L';'))
+        if (!g_GlobalInitialized ||
+            !ShouldAppsUseDarkMode() ||
+            !pszClassList ||
+            L'\0' == pszClassList[0] ||
+            nullptr != std::wcschr(pszClassList, L';'))
         {
-            wchar_t DarkClassList[256] = {};
-            int Length = ::swprintf_s(
+            return nullptr;
+        }
+
+        // Compound dark variants confirmed to exist on Windows 10:
+        // DarkMode_Explorer::ScrollBar, DarkMode_ItemsView::Header,
+        // DarkMode_ItemsView::ListView, DarkMode_CFD::ComboBox,
+        // DarkMode_EditComposited::Edit,
+        // DarkMode_SearchBoxComposited::SearchBox,
+        // DarkMode_Communications::Rebar.
+        LPCWSTR DarkClassList = nullptr;
+        if (0 == std::wcscmp(pszClassList, L"ScrollBar"))
+        {
+            // (already narrowed to Explorer::ScrollBar below)
+            DarkClassList = L"DarkMode_Explorer::ScrollBar";
+        }
+        else if (0 == std::wcscmp(pszClassList, L"Header"))
+        {
+            DarkClassList = L"DarkMode_ItemsView::Header";
+        }
+        else if (0 == std::wcscmp(pszClassList, L"ListView"))
+        {
+            DarkClassList = L"DarkMode_ItemsView::ListView";
+        }
+        else if (0 == std::wcscmp(pszClassList, L"Combobox"))
+        {
+            DarkClassList = L"DarkMode_CFD::ComboBox";
+        }
+        else if (0 == std::wcscmp(pszClassList, L"Edit"))
+        {
+            DarkClassList = L"DarkMode_EditComposited::Edit";
+        }
+        else if (0 == std::wcscmp(pszClassList, L"SearchBox") ||
+                 0 == std::wcscmp(pszClassList, L"SearchEditBox"))
+        {
+            DarkClassList = L"DarkMode_SearchBoxComposited::SearchBox";
+        }
+        else if (0 == std::wcscmp(pszClassList, L"REBAR"))
+        {
+            DarkClassList = L"DarkMode_Communications::Rebar";
+        }
+
+        if (DarkClassList)
+        {
+            HTHEME DarkTheme = ::OriginalOpenThemeData(hwnd, DarkClassList);
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"OpenThemeData class=%ws -> %ws %s",
+                pszClassList,
                 DarkClassList,
-                MO_ARRAY_SIZE(DarkClassList),
-                L"DarkMode_%s",
-                pszClassList);
-            if (0 < Length)
-            {
-                HTHEME DarkTheme = ::OriginalOpenThemeData(
-                    hwnd,
-                    DarkClassList);
-                // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-                K7ThemeDebugTrace(
-                    L"OpenThemeData class=%ws -> DarkMode variant %s",
-                    pszClassList,
-                    (DarkTheme ? L"HIT" : L"MISS"));
-                // *** END TEMPORARY DEBUG INSTRUMENTATION ***
-                return DarkTheme;
-            }
+                (DarkTheme ? L"HIT" : L"MISS"));
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+            return DarkTheme;
         }
         return nullptr;
     }
@@ -2263,12 +2294,17 @@ namespace
         _In_opt_ HWND hwnd,
         _In_ LPCWSTR pszClassList)
     {
-        // Workaround for dark mode scrollbar
+        // Workaround for dark mode scrollbar: redirect the scrollbar theme
+        // data through the whitelist in TryOpenDarkModeThemeData, falling
+        // back to the Explorer-styled scrollbar (light) on failure.
         if (0 == std::wcscmp(pszClassList, L"ScrollBar"))
         {
-            return ::DetouredOpenNcThemeData(
-                nullptr,
-                L"Explorer::ScrollBar");
+            HTHEME DarkTheme = ::TryOpenDarkModeThemeData(nullptr, pszClassList);
+            if (DarkTheme)
+            {
+                return DarkTheme;
+            }
+            return ::OriginalOpenNcThemeData(nullptr, L"Explorer::ScrollBar");
         }
 
         HTHEME DarkTheme = ::TryOpenDarkModeThemeData(hwnd, pszClassList);
