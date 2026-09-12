@@ -1149,6 +1149,9 @@ namespace
             DrawThemeBackground,
             DrawThemeBackgroundEx,
             OpenNcThemeData,
+            OpenThemeData,
+            OpenThemeDataEx,
+            OpenThemeDataForDpi,
             GetThemeClass,
             GetThemeSysColor,
 
@@ -1332,6 +1335,50 @@ namespace
             return nullptr;
         }
         return FunctionAddress(hwnd, pszClassList);
+    }
+
+    static HTHEME WINAPI OriginalOpenThemeData(
+        _In_opt_ HWND hwnd,
+        _In_ LPCWSTR pszClassList)
+    {
+        using FunctionType = decltype(::OpenThemeData)*;
+        FunctionType FunctionAddress = reinterpret_cast<FunctionType>(
+            g_FunctionTable[FunctionTypes::OpenThemeData].Original);
+        if (!FunctionAddress)
+        {
+            return nullptr;
+        }
+        return FunctionAddress(hwnd, pszClassList);
+    }
+
+    static HTHEME WINAPI OriginalOpenThemeDataEx(
+        _In_opt_ HWND hwnd,
+        _In_ LPCWSTR pszClassList,
+        _In_ DWORD dwFlags)
+    {
+        using FunctionType = decltype(::OpenThemeDataEx)*;
+        FunctionType FunctionAddress = reinterpret_cast<FunctionType>(
+            g_FunctionTable[FunctionTypes::OpenThemeDataEx].Original);
+        if (!FunctionAddress)
+        {
+            return nullptr;
+        }
+        return FunctionAddress(hwnd, pszClassList, dwFlags);
+    }
+
+    static HTHEME WINAPI OriginalOpenThemeDataForDpi(
+        _In_opt_ HWND hwnd,
+        _In_ LPCWSTR pszClassList,
+        _In_ UINT dpi)
+    {
+        using FunctionType = decltype(::OpenThemeDataForDpi)*;
+        FunctionType FunctionAddress = reinterpret_cast<FunctionType>(
+            g_FunctionTable[FunctionTypes::OpenThemeDataForDpi].Original);
+        if (!FunctionAddress)
+        {
+            return nullptr;
+        }
+        return FunctionAddress(hwnd, pszClassList, dpi);
     }
 
     static HRESULT WINAPI OriginalGetThemeClass(
@@ -2167,28 +2214,21 @@ namespace
             nullptr);
     }
 
-    static HTHEME WINAPI DetouredOpenNcThemeData(
+    // Redirect a theme class to its built-in DarkMode_ variant.
+    // Since Windows 10 1803, aero.msstyles contains a complete set of dark
+    // theme classes (DarkMode_Explorer, DarkMode_ItemsView, DarkMode_Toolbar,
+    // ...) which the system shell uses for its own dark mode. Opening the
+    // dark variant here makes every subsequent DrawThemeBackground /
+    // GetThemeColor / DrawThemeText call render with native dark theme data
+    // at once - without per-class patching. Classes without a DarkMode_
+    // variant simply fail to open and fall back to the original class, where
+    // the hand-drawn overrides in DetouredDrawThemeBackground take over.
+    // Returns nullptr when no redirect applies (light mode, already dark
+    // class list, compound lists, or missing variant).
+    static HTHEME TryOpenDarkModeThemeData(
         _In_opt_ HWND hwnd,
         _In_ LPCWSTR pszClassList)
     {
-        // Workaround for dark mode scrollbar
-        if (0 == std::wcscmp(pszClassList, L"ScrollBar"))
-        {
-            return ::DetouredOpenNcThemeData(
-                nullptr,
-                L"Explorer::ScrollBar");
-        }
-
-        // Redirect every theme class to its built-in DarkMode_ variant.
-        // Since Windows 10 1803, aero.msstyles contains a complete set of
-        // dark theme classes (DarkMode_Explorer, DarkMode_ItemsView,
-        // DarkMode_Toolbar, ...) which the system shell uses for its own
-        // dark mode. Opening the dark variant here makes every subsequent
-        // DrawThemeBackground/GetThemeColor/DrawThemeText call render with
-        // native dark theme data at once - without per-class patching.
-        // Classes without a DarkMode_ variant simply fail to open and fall
-        // back to the original class, where the hand-drawn overrides in
-        // DetouredDrawThemeBackground take over.
         if (g_GlobalInitialized &&
             ShouldAppsUseDarkMode() &&
             pszClassList &&
@@ -2204,23 +2244,78 @@ namespace
                 pszClassList);
             if (0 < Length)
             {
-                HTHEME DarkTheme = ::OriginalOpenNcThemeData(
+                HTHEME DarkTheme = ::OriginalOpenThemeData(
                     hwnd,
                     DarkClassList);
                 // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
                 K7ThemeDebugTrace(
-                    L"OpenNcThemeData class=%ws -> DarkMode variant %s",
+                    L"OpenThemeData class=%ws -> DarkMode variant %s",
                     pszClassList,
                     (DarkTheme ? L"HIT" : L"MISS"));
                 // *** END TEMPORARY DEBUG INSTRUMENTATION ***
-                if (DarkTheme)
-                {
-                    return DarkTheme;
-                }
+                return DarkTheme;
             }
+        }
+        return nullptr;
+    }
+
+    static HTHEME WINAPI DetouredOpenNcThemeData(
+        _In_opt_ HWND hwnd,
+        _In_ LPCWSTR pszClassList)
+    {
+        // Workaround for dark mode scrollbar
+        if (0 == std::wcscmp(pszClassList, L"ScrollBar"))
+        {
+            return ::DetouredOpenNcThemeData(
+                nullptr,
+                L"Explorer::ScrollBar");
+        }
+
+        HTHEME DarkTheme = ::TryOpenDarkModeThemeData(hwnd, pszClassList);
+        if (DarkTheme)
+        {
+            return DarkTheme;
         }
 
         return ::OriginalOpenNcThemeData(hwnd, pszClassList);
+    }
+
+    static HTHEME WINAPI DetouredOpenThemeData(
+        _In_opt_ HWND hwnd,
+        _In_ LPCWSTR pszClassList)
+    {
+        HTHEME DarkTheme = ::TryOpenDarkModeThemeData(hwnd, pszClassList);
+        if (DarkTheme)
+        {
+            return DarkTheme;
+        }
+        return ::OriginalOpenThemeData(hwnd, pszClassList);
+    }
+
+    static HTHEME WINAPI DetouredOpenThemeDataEx(
+        _In_opt_ HWND hwnd,
+        _In_ LPCWSTR pszClassList,
+        _In_ DWORD dwFlags)
+    {
+        HTHEME DarkTheme = ::TryOpenDarkModeThemeData(hwnd, pszClassList);
+        if (DarkTheme)
+        {
+            return DarkTheme;
+        }
+        return ::OriginalOpenThemeDataEx(hwnd, pszClassList, dwFlags);
+    }
+
+    static HTHEME WINAPI DetouredOpenThemeDataForDpi(
+        _In_opt_ HWND hwnd,
+        _In_ LPCWSTR pszClassList,
+        _In_ UINT dpi)
+    {
+        HTHEME DarkTheme = ::TryOpenDarkModeThemeData(hwnd, pszClassList);
+        if (DarkTheme)
+        {
+            return DarkTheme;
+        }
+        return ::OriginalOpenThemeDataForDpi(hwnd, pszClassList, dpi);
     }
 
     static bool InitializeFunctionTable()
@@ -2276,6 +2371,21 @@ namespace
                         ::DetouredOpenNcThemeData;
                 }
             }
+            g_FunctionTable[FunctionTypes::OpenThemeData].Original =
+                reinterpret_cast<PVOID>(::OpenThemeData);
+            g_FunctionTable[FunctionTypes::OpenThemeData].Detoured =
+                ::DetouredOpenThemeData;
+
+            g_FunctionTable[FunctionTypes::OpenThemeDataEx].Original =
+                reinterpret_cast<PVOID>(::OpenThemeDataEx);
+            g_FunctionTable[FunctionTypes::OpenThemeDataEx].Detoured =
+                ::DetouredOpenThemeDataEx;
+
+            g_FunctionTable[FunctionTypes::OpenThemeDataForDpi].Original =
+                reinterpret_cast<PVOID>(::OpenThemeDataForDpi);
+            g_FunctionTable[FunctionTypes::OpenThemeDataForDpi].Detoured =
+                ::DetouredOpenThemeDataForDpi;
+
             if (ModuleHandle)
             {
                 PVOID ProcAddress = ::GetProcAddress(
