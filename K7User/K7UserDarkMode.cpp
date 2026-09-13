@@ -211,10 +211,15 @@ namespace
         // export directly (e.g. the common file dialogs) only honor the
         // forced modes, so FORCE_DARK is required on light-theme systems
         // with the inverted theme enabled.
+        // FORCE_LIGHT is required for the mirrored case: a dark-theme system
+        // with the inverted theme enabled must hand out light theme data to
+        // the classic controls (namespace tree, rebar, menus), otherwise
+        // they keep rendering with the system dark data on top of the light
+        // XAML surfaces, producing unreadable black bars.
         ::K7SetPreferredAppMode(
             ShouldUseDarkMode
                 ? K7PreferredAppMode::ForceDark
-                : K7PreferredAppMode::Default);
+                : K7PreferredAppMode::ForceLight);
         ::MileRefreshImmersiveColorPolicyState();
         // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
         K7ThemeDebugTrace(
@@ -1423,6 +1428,17 @@ namespace
             }
         }
 
+        // Disabled popup menu items (MPI_DISABLED = 3, MPI_DISABLEDHOT = 4)
+        // keep the same muted gray as disabled buttons so they stay visually
+        // distinct from the enabled entries.
+        if (HasClassName && 0 == ::_wcsicmp(ClassName, L"Menu"))
+        {
+            if (14 == iPartId && (3 == iStateId || 4 == iStateId))
+            {
+                return RGB(109, 109, 109);
+            }
+        }
+
         return g_DarkModeForegroundColor;
     }
 
@@ -1588,11 +1604,13 @@ namespace
                 MO_ARRAY_SIZE(FillClassName))))
             {
                 // Native dark theme data keeps its own (already dark) fill
-                // colors, and menus keep the system-provided light
-                // background on a light system forced into dark mode.
+                // colors. Menus are not exempted here anymore: the common
+                // file dialogs are shown with the suspended (native) theme
+                // via K7UserSuspendDarkMode now, so their DirectUI surfaces
+                // never reach this detour, while the File Manager popup
+                // menus need the dark fill.
                 FillExempt =
-                    (0 == std::wcsncmp(FillClassName, L"DarkMode_", 9)) ||
-                    (0 == ::_wcsicmp(FillClassName, L"Menu"));
+                    (0 == std::wcsncmp(FillClassName, L"DarkMode_", 9));
             }
 
             // DirectUI surfaces inside the common file dialogs (file list,
@@ -1672,8 +1690,10 @@ namespace
     static bool IsDarkTextThemeClass(
         _In_z_ LPCWSTR ClassName)
     {
-        if (0 == std::wcsncmp(ClassName, L"DarkMode_", 9) ||
-            0 == ::_wcsicmp(ClassName, L"Menu"))
+        // Menus belong to the dark text classes now: their backgrounds are
+        // drawn dark by the DrawThemeBackground Menu handler above, so the
+        // text has to be forced light as well.
+        if (0 == std::wcsncmp(ClassName, L"DarkMode_", 9))
         {
             return false;
         }
@@ -1700,10 +1720,10 @@ namespace
 
         // Exempt (= true, keep the native text color) exactly when the
         // unified dark-text rule says no forcing is needed: native dark
-        // theme data, menus, compound classes with light backgrounds, and
-        // single classes whose backgrounds stay light. Everything else
-        // (dark-background classes, incl. the whitelisted compounds) gets
-        // its text forced to white.
+        // theme data, compound classes with light backgrounds, and single
+        // classes whose backgrounds stay light. Everything else (dark
+        // background classes, incl. the whitelisted compounds and menus)
+        // gets its text forced to white.
         return !IsDarkTextThemeClass(ClassName);
     }
 
@@ -1956,7 +1976,74 @@ namespace
         // comparing cached theme handles, because the handles are per-window
         // and can be reopened (and thus invalidated) at any time, while the
         // class name of an opened theme data is stable.
-        if (IsThemeClass(hTheme, L"Tab"))
+        if (::IsThemeClass(hTheme, L"Menu"))
+        {
+            // Popup menus use the Menu theme class. uxtheme hands out the
+            // system (light) theme data for menus even when the process is
+            // in ForceDark mode, and the private menu theme cache inside
+            // uxtheme is not reliably flushable, so freshly opened popup
+            // menus kept rendering with the light system appearance after a
+            // restart with the inverted theme already enabled. Draw every
+            // menu part explicitly instead; the colors mirror the menu bar
+            // painting in the WM_UAHDRAWMENU handler above.
+            switch (iPartId)
+            {
+            case 9:  // MENU_POPUPBACKGROUND
+            case 10: // MENU_POPUPBORDERS
+            case 11: // MENU_POPUPGUTTER
+            {
+                ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
+                return S_OK;
+            }
+            case 13: // MENU_POPUPCHECKBACKGROUND
+            {
+                ::FillRect(
+                    hdc,
+                    pRect,
+                    (3 == iStateId || 6 == iStateId)
+                        ? ::GetDarkModeMenuSelectedBackgroundBrush()
+                        : ::GetDarkModeBackgroundBrush());
+                return S_OK;
+            }
+            case 14: // MENU_POPUPITEM
+            {
+                ::FillRect(
+                    hdc,
+                    pRect,
+                    (2 == iStateId || 4 == iStateId)
+                        ? ::GetDarkModeMenuSelectedBackgroundBrush()
+                        : ::GetDarkModeBackgroundBrush());
+                return S_OK;
+            }
+            case 15: // MENU_POPUPSEPARATOR
+            {
+                ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
+
+                RECT LineRect = *pRect;
+                LONG LineHeight = LineRect.bottom - LineRect.top;
+                LineRect.top += (LineHeight > 0) ? ((LineHeight - 1) / 2) : 0;
+                LineRect.bottom = LineRect.top + 1;
+                ::FillRect(hdc, &LineRect, ::GetDarkModeBorderBrush());
+                return S_OK;
+            }
+            default:
+            {
+                // The remaining parts (12 = MENU_POPUPCHECK,
+                // 16 = MENU_POPUPSUBMENU, 7/8 = menu bar surfaces) carry
+                // glyphs or already-dark surfaces. Paint the dark surface
+                // first and let the system glyph render on top of it.
+                ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
+                return ::OriginalDrawThemeBackground(
+                    hTheme,
+                    hdc,
+                    iPartId,
+                    iStateId,
+                    pRect,
+                    pClipRect);
+            }
+            }
+        }
+        else if (IsThemeClass(hTheme, L"Tab"))
         {
             const int HoveredCheckStateId[] =
             {
@@ -2615,7 +2702,7 @@ EXTERN_C MO_RESULT MOAPI K7UserResumeDarkMode()
         ::K7SetPreferredAppMode(
             g_SuspendSavedShouldUseDarkMode
                 ? K7PreferredAppMode::ForceDark
-                : K7PreferredAppMode::Default);
+                : K7PreferredAppMode::ForceLight);
         ::MileRefreshImmersiveColorPolicyState();
         // Repaint the windows in case anything drew while suspended.
         ::K7UserRefreshTheme();
