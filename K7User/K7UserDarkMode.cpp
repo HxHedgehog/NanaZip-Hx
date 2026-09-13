@@ -47,7 +47,11 @@ namespace
     const COLORREF g_LightModeBackgroundColor = RGB(255, 255, 255);
     const COLORREF g_LightModeForegroundColor = RGB(0, 0, 0);
 
-    const COLORREF g_DarkModeBackgroundColor = RGB(0, 0, 0);
+    // The dark background must match the XAML islands' dark theme surface
+    // (DarkSolidBackgroundFillColorDefault, #202020). Pure black desynchronizes
+    // the classic controls from the XAML surfaces and renders the whole
+    // window as an unreadable black void.
+    const COLORREF g_DarkModeBackgroundColor = RGB(0x20, 0x20, 0x20);
     const COLORREF g_DarkModeForegroundColor = RGB(255, 255, 255);
     const COLORREF g_DarkModeBorderColor = RGB(127, 127, 127);
     const COLORREF g_DarkModeMenuSelectedBackgroundColor = RGB(65, 65, 65);
@@ -254,6 +258,40 @@ namespace
         static HBRUSH CachedResult =
             ::CreateSolidBrush(g_DarkModeMenuSelectedBackgroundColor);
         return CachedResult;
+    }
+
+    static void ApplyWindowSystemBackdrop(
+        _In_ HWND hWnd,
+        _In_ bool ShouldExtendFrame)
+    {
+        // The Mica backdrop always follows the SYSTEM theme, not the
+        // application theme. When the inverted theme turns the application
+        // light on a dark-theme system, a Mica backdrop keeps showing dark
+        // system scenery through every transparent island region (e.g. the
+        // gap between the address bar island bottom and the panel top),
+        // which reads as an opaque black bar. Only keep Mica while the
+        // whole window frame is extended for the dark appearance, and fall
+        // back to DWMSBT_NONE otherwise so transparent regions show the
+        // plain window surface instead.
+        if (ShouldExtendFrame)
+        {
+            ::MileSetWindowSystemBackdropTypeAttribute(
+                hWnd,
+                MILE_WINDOW_SYSTEM_BACKDROP_TYPE_MICA);
+        }
+        else
+        {
+#ifndef DWMWA_SYSTEMBACKDROP_TYPE
+#define DWMWA_SYSTEMBACKDROP_TYPE 38
+#endif
+            // DWMSBT_NONE = 2 (DWM_SYSTEMBACKDROP_TYPE, documented value).
+            INT BackdropType = 2;
+            ::DwmSetWindowAttribute(
+                hWnd,
+                DWMWA_SYSTEMBACKDROP_TYPE,
+                &BackdropType,
+                sizeof(BackdropType));
+        }
     }
 
     static bool IsStandardDynamicRangeMode()
@@ -730,6 +768,9 @@ namespace
                     ShouldUseDarkMode &&
                     ::IsStandardDynamicRangeMode() &&
                     g_ThreadContext.MicaBackdropAvailable);
+
+                ::ApplyWindowSystemBackdrop(hWnd, ShouldExtendFrame);
+
                 MARGINS Margins = {};
                 if (ShouldExtendFrame)
                 {
@@ -775,10 +816,6 @@ namespace
                 hWnd,
                 TRUE);
 
-            ::MileSetWindowSystemBackdropTypeAttribute(
-                hWnd,
-                MILE_WINDOW_SYSTEM_BACKDROP_TYPE_MICA);
-
             g_ThreadContext.MicaBackdropAvailable =
                 (S_OK == ::MileEnableImmersiveDarkModeForWindow(
                     hWnd,
@@ -788,6 +825,9 @@ namespace
                 ShouldAppsUseDarkMode() &&
                 ::IsStandardDynamicRangeMode() &&
                 g_ThreadContext.MicaBackdropAvailable);
+
+            ::ApplyWindowSystemBackdrop(hWnd, ShouldExtendFrame);
+
             if (ShouldExtendFrame)
             {
                 MARGINS Margins = { -1 };
@@ -843,8 +883,7 @@ namespace
                         ::FillRect(
                             reinterpret_cast<HDC>(wParam),
                             &ClientArea,
-                            reinterpret_cast<HBRUSH>(
-                                ::GetStockObject(BLACK_BRUSH)));
+                            ::GetDarkModeBackgroundBrush());
                         return TRUE;
                     }
                 }
@@ -858,11 +897,10 @@ namespace
                         ::FillRect(
                             reinterpret_cast<HDC>(wParam),
                             &ClientArea,
-                            reinterpret_cast<HBRUSH>(
-                                ::GetStockObject(
-                                    ShouldAppsUseDarkMode()
-                                    ? BLACK_BRUSH
-                                    : WHITE_BRUSH)));
+                            ShouldAppsUseDarkMode()
+                                ? ::GetDarkModeBackgroundBrush()
+                                : reinterpret_cast<HBRUSH>(
+                                    ::GetStockObject(WHITE_BRUSH)));
                         return TRUE;
                     }
                 }
@@ -2748,6 +2786,8 @@ EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme()
             ShouldAppsUseDarkMode() &&
             ::IsStandardDynamicRangeMode() &&
             g_ThreadContext.MicaBackdropAvailable);
+
+        ::ApplyWindowSystemBackdrop(hWnd, ShouldExtendFrame);
 
         MARGINS Margins = {};
         if (ShouldExtendFrame)
