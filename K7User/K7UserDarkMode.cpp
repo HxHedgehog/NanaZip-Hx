@@ -1665,11 +1665,10 @@ namespace
     }
 
     // Compound class lists ("A::B") belong to the system common file
-    // dialogs. Most of them keep light backgrounds there, so their native
-    // dark text color stays readable and forcing white would produce
-    // white-on-white. These two are the exceptions: their backgrounds are
-    // darkened by our TMT_FILLCOLOR rule / header drawing handler, so their
-    // text must be forced to white as well.
+    // dialogs. Their backgrounds are drawn by DirectUI behind our detours
+    // (delay-load bound uxtheme calls never reach us), so we cannot control
+    // their background color - forcing white text there would only produce
+    // unreadable white-on-white headers. Never force text on them.
     static bool IsDarkTextThemeClass(
         _In_z_ LPCWSTR ClassName)
     {
@@ -1681,8 +1680,7 @@ namespace
 
         if (nullptr != std::wcsstr(ClassName, L"::"))
         {
-            return (0 == ::_wcsicmp(ClassName, L"ItemsView::Header") ||
-                    0 == ::_wcsicmp(ClassName, L"ItemsView::ListView"));
+            return false;
         }
 
         return IsDarkBackgroundThemeClass(ClassName);
