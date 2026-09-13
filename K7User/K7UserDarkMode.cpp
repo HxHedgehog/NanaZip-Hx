@@ -2564,6 +2564,69 @@ namespace
     }
 }
 
+// The system common file dialogs (IFileOpenDialog) render their content
+// through DirectUI which binds the uxtheme draw functions via delay-load.
+// Those bound pointers bypass our detours, so the inverted theme can never
+// style those dialogs consistently (dark backgrounds cannot reach the
+// header/tree areas, producing unreadable patches). The clean solution is
+// to show those dialogs with their native system appearance: suspend the
+// inverted theme while such a dialog is visible and resume afterwards.
+static volatile LONG g_SuspendCounter = 0;
+static bool g_SuspendSavedShouldUseDarkMode = false;
+
+EXTERN_C MO_RESULT MOAPI K7UserSuspendDarkMode()
+{
+    if (!g_GlobalInitialized)
+    {
+        return MO_RESULT_SUCCESS_OK;
+    }
+
+    if (1 == ::InterlockedIncrement(&g_SuspendCounter))
+    {
+        g_SuspendSavedShouldUseDarkMode = ShouldAppsUseDarkMode();
+        SetShouldAppsUseDarkMode(false);
+        ::K7SetPreferredAppMode(K7PreferredAppMode::Default);
+        ::MileRefreshImmersiveColorPolicyState();
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        K7ThemeDebugTrace(L"K7UserSuspendDarkMode: suspended (saved dark=%d)",
+            (int)g_SuspendSavedShouldUseDarkMode);
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+    }
+    return MO_RESULT_SUCCESS_OK;
+}
+
+EXTERN_C MO_RESULT MOAPI K7UserResumeDarkMode()
+{
+    if (!g_GlobalInitialized)
+    {
+        return MO_RESULT_SUCCESS_OK;
+    }
+
+    LONG Counter = ::InterlockedDecrement(&g_SuspendCounter);
+    if (Counter < 0)
+    {
+        // Unbalanced resume call; clamp back to the neutral state.
+        ::InterlockedExchange(&g_SuspendCounter, 0);
+        return MO_RESULT_SUCCESS_OK;
+    }
+    if (0 == Counter)
+    {
+        SetShouldAppsUseDarkMode(g_SuspendSavedShouldUseDarkMode);
+        ::K7SetPreferredAppMode(
+            g_SuspendSavedShouldUseDarkMode
+                ? K7PreferredAppMode::ForceDark
+                : K7PreferredAppMode::Default);
+        ::MileRefreshImmersiveColorPolicyState();
+        // Repaint the windows in case anything drew while suspended.
+        ::K7UserRefreshTheme();
+        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        K7ThemeDebugTrace(L"K7UserResumeDarkMode: resumed (dark=%d)",
+            (int)g_SuspendSavedShouldUseDarkMode);
+        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+    }
+    return MO_RESULT_SUCCESS_OK;
+}
+
 EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme()
 {
     // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***

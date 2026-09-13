@@ -1192,8 +1192,14 @@ void CPanel::AddToExistingArchive()
         }
     }
 
+    // The DirectUI internals of the modern dialog bypass the inverted theme
+    // detours, so show it with its native system appearance.
+    ::K7UserSuspendDarkMode();
+    const HRESULT ShowResult = FileDialog->Show(GetParent());
+    ::K7UserResumeDarkMode();
+
     CMyComPtr<IShellItemArray> Items;
-    if (FAILED(FileDialog->Show(GetParent())) ||
+    if (FAILED(ShowResult) ||
         FAILED(FileDialog->GetResults(&Items)))
     {
         return;

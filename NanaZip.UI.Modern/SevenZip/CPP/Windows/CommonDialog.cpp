@@ -17,6 +17,7 @@
 
 // **************** NanaZip Modification Start ****************
 #include <shobjidl.h>
+#include <K7User.h>
 // **************** NanaZip Modification End ******************
 
 #ifndef _UNICODE
@@ -291,7 +292,16 @@ bool MyGetOpenFileName(HWND hwnd, LPCWSTR title,
         Dialog->SetFileName(Name);
       }
 
-      if (SUCCEEDED(Dialog->Show(hwnd)))
+      // The DirectUI internals of the modern dialog bind uxtheme via
+      // delay-load and bypass the inverted theme detours, so the dialog can
+      // never be styled consistently in the inverted theme. Show it with
+      // its native system appearance instead: suspend the inverted theme
+      // while the dialog is visible.
+      ::K7UserSuspendDarkMode();
+      const HRESULT ShowResult = Dialog->Show(hwnd);
+      ::K7UserResumeDarkMode();
+
+      if (SUCCEEDED(ShowResult))
       {
         IShellItem* ResultItem = nullptr;
         if (SUCCEEDED(Dialog->GetResult(&ResultItem)) && ResultItem)
