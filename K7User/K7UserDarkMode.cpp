@@ -264,34 +264,47 @@ namespace
         _In_ HWND hWnd,
         _In_ bool ShouldExtendFrame)
     {
-        // The Mica backdrop always follows the SYSTEM theme, not the
-        // application theme. When the inverted theme turns the application
-        // light on a dark-theme system, a Mica backdrop keeps showing dark
-        // system scenery through every transparent island region (e.g. the
-        // gap between the address bar island bottom and the panel top),
-        // which reads as an opaque black bar. Only keep Mica while the
-        // whole window frame is extended for the dark appearance, and fall
-        // back to DWMSBT_NONE otherwise so transparent regions show the
-        // plain window surface instead.
-        if (ShouldExtendFrame)
-        {
-            ::MileSetWindowSystemBackdropTypeAttribute(
-                hWnd,
-                MILE_WINDOW_SYSTEM_BACKDROP_TYPE_MICA);
-        }
-        else
-        {
 #ifndef DWMWA_SYSTEMBACKDROP_TYPE
 #define DWMWA_SYSTEMBACKDROP_TYPE 38
 #endif
-            // DWMSBT_NONE = 2 (DWM_SYSTEMBACKDROP_TYPE, documented value).
-            INT BackdropType = 2;
-            ::DwmSetWindowAttribute(
-                hWnd,
-                DWMWA_SYSTEMBACKDROP_TYPE,
-                &BackdropType,
-                sizeof(BackdropType));
-        }
+#ifndef DWMWA_USE_HOSTBACKDROPBRUSH
+#define DWMWA_USE_HOSTBACKDROPBRUSH 17
+#endif
+#ifndef DWMWA_HOSTBACKDROPBRUSH
+#define DWMWA_HOSTBACKDROPBRUSH 18
+#endif
+        // The XAML islands intentionally leave regions transparent (e.g. the
+        // address bar background and the gap between the island bottom and
+        // the extended frame margin). Those regions compose the DWM backdrop,
+        // which always follows the SYSTEM theme: Mica leaked dark scenery
+        // into the light application as an opaque black bar on dark-theme
+        // systems, and DWMSBT_NONE composes the same regions as pure black.
+        // Replace the system backdrop with a host backdrop brush that always
+        // matches the application theme instead.
+        INT BackdropType = 2; // DWMSBT_NONE
+        ::DwmSetWindowAttribute(
+            hWnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            &BackdropType,
+            sizeof(BackdropType));
+        BOOL UseHostBackdrop = TRUE;
+        ::DwmSetWindowAttribute(
+            hWnd,
+            DWMWA_USE_HOSTBACKDROPBRUSH,
+            &UseHostBackdrop,
+            sizeof(UseHostBackdrop));
+        static const HBRUSH DarkHostBackdropBrush =
+            ::CreateSolidBrush(g_DarkModeBackgroundColor);
+        static const HBRUSH LightHostBackdropBrush =
+            ::CreateSolidBrush(RGB(0xFF, 0xFF, 0xFF));
+        HBRUSH HostBackdropBrush = (ShouldExtendFrame
+            ? DarkHostBackdropBrush
+            : LightHostBackdropBrush);
+        ::DwmSetWindowAttribute(
+            hWnd,
+            DWMWA_HOSTBACKDROPBRUSH,
+            &HostBackdropBrush,
+            sizeof(HostBackdropBrush));
     }
 
     static bool IsStandardDynamicRangeMode()
@@ -2709,12 +2722,23 @@ EXTERN_C MO_RESULT MOAPI K7UserSuspendDarkMode()
     if (1 == ::InterlockedIncrement(&g_SuspendCounter))
     {
         g_SuspendSavedShouldUseDarkMode = ShouldAppsUseDarkMode();
-        SetShouldAppsUseDarkMode(false);
+        // Follow the system appearance instead of forcing light: the common
+        // file dialogs render natively, i.e. dark on a dark-theme system and
+        // light on a light-theme system. Forcing false here splits the
+        // dialog in two on dark-theme systems, because the DirectUI content
+        // follows the system while the classic controls (file name edit,
+        // combo boxes, buttons) follow the forced flag and render light
+        // over the dark dialog.
+        const bool SystemDarkMode = ::MileShouldAppsUseDarkMode() &&
+            !::MileShouldAppsUseHighContrastMode();
+        SetShouldAppsUseDarkMode(SystemDarkMode);
         ::K7SetPreferredAppMode(K7PreferredAppMode::Default);
         ::MileRefreshImmersiveColorPolicyState();
         // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-        K7ThemeDebugTrace(L"K7UserSuspendDarkMode: suspended (saved dark=%d)",
-            (int)g_SuspendSavedShouldUseDarkMode);
+        K7ThemeDebugTrace(
+            L"K7UserSuspendDarkMode: suspended (saved dark=%d system dark=%d)",
+            (int)g_SuspendSavedShouldUseDarkMode,
+            (int)SystemDarkMode);
         // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     }
     return MO_RESULT_SUCCESS_OK;
