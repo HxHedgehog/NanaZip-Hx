@@ -2160,10 +2160,79 @@ namespace
                 ::FillRect(hdc, &LineRect, ::GetDarkModeBorderBrush());
                 return S_OK;
             }
+            case 12: // MENU_POPUPCHECK
+            {
+                // uxtheme hands out the light theme data for menus even in
+                // ForceDark mode, so the system check mark and radio bullet
+                // glyphs render in dark ink that is invisible on the dark
+                // check background painted above. Draw them manually.
+                COLORREF GlyphColor =
+                    (2 == iStateId || 4 == iStateId)
+                        ? RGB(109, 109, 109)
+                        : g_DarkModeForegroundColor;
+                LONG Width = pRect->right - pRect->left;
+                LONG Height = pRect->bottom - pRect->top;
+
+                if (3 == iStateId || 4 == iStateId)
+                {
+                    // Radio bullet: a filled circle centered in the cell.
+                    LONG Radius = ((Width < Height) ? Width : Height) / 4;
+                    if (Radius < 2)
+                    {
+                        Radius = 2;
+                    }
+                    LONG CenterX = (pRect->left + pRect->right) / 2;
+                    LONG CenterY = (pRect->top + pRect->bottom) / 2;
+                    RECT BulletRect =
+                    {
+                        CenterX - Radius,
+                        CenterY - Radius,
+                        CenterX + Radius + 1,
+                        CenterY + Radius + 1
+                    };
+                    HBRUSH BulletBrush = ::CreateSolidBrush(GlyphColor);
+                    if (BulletBrush)
+                    {
+                        ::FillRect(hdc, &BulletRect, BulletBrush);
+                        ::DeleteObject(BulletBrush);
+                    }
+                }
+                else
+                {
+                    // Check mark: a two-segment polyline.
+                    LONG Cell = ((Width < Height) ? Width : Height);
+                    if (Cell < 6)
+                    {
+                        Cell = 6;
+                    }
+                    LONG Left = pRect->left + (Width - Cell) / 2;
+                    LONG Top = pRect->top + (Height - Cell) / 2;
+                    POINT Points[3] =
+                    {
+                        { Left + Cell * 25 / 100, Top + Cell * 55 / 100 },
+                        { Left + Cell * 40 / 100, Top + Cell * 70 / 100 },
+                        { Left + Cell * 75 / 100, Top + Cell * 30 / 100 }
+                    };
+                    HPEN GlyphPen = ::CreatePen(PS_SOLID, 2, GlyphColor);
+                    if (GlyphPen)
+                    {
+                        HGDIOBJ OldPen = ::SelectObject(hdc, GlyphPen);
+                        HGDIOBJ OldBrush =
+                            ::SelectObject(
+                                hdc,
+                                ::GetStockObject(NULL_BRUSH));
+                        ::Polyline(hdc, Points, 3);
+                        ::SelectObject(hdc, OldBrush);
+                        ::SelectObject(hdc, OldPen);
+                        ::DeleteObject(GlyphPen);
+                    }
+                }
+                return S_OK;
+            }
             default:
             {
-                // The remaining parts (12 = MENU_POPUPCHECK,
-                // 16 = MENU_POPUPSUBMENU, 7/8 = menu bar surfaces) carry
+                // The remaining parts (16 = MENU_POPUPSUBMENU,
+                // 7/8 = menu bar surfaces) carry
                 // glyphs or already-dark surfaces. Paint the dark surface
                 // first and let the system glyph render on top of it.
                 ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
