@@ -456,7 +456,20 @@ namespace
 
             if (0 == std::wcscmp(ClassName, WC_BUTTONW))
             {
-                ::SetWindowTheme(WindowHandle, L"Explorer", nullptr);
+                // The plain "Explorer" subclass has dark variants that follow
+                // the SYSTEM theme state, which turned freshly created buttons
+                // (e.g. the Options property sheet buttons) dark while the
+                // inverted theme had the application light on a dark-theme
+                // system. Only request the dark button class while the
+                // inverted theme is active and reset it otherwise.
+                if (ShouldAppsUseDarkMode())
+                {
+                    ::SetWindowTheme(WindowHandle, L"DarkMode_Explorer", nullptr);
+                }
+                else
+                {
+                    ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                }
             }
             else if (
                 (0 == std::wcscmp(ClassName, WC_COMBOBOXW)) ||

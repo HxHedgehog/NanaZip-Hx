@@ -25,9 +25,13 @@
 #pragma comment(lib, "comctl32.lib")
 
 #include <winrt/Windows.ApplicationModel.Resources.Core.h>
+#include <winrt/Windows.UI.h>
 #include <winrt/Windows.UI.Xaml.Hosting.h>
 #include <winrt/Windows.UI.Xaml.h>
+#include <winrt/Windows.UI.Xaml.Media.h>
 
+#include <cwchar>
+#include <iterator>
 #include <mutex>
 #include <map>
 
@@ -253,6 +257,50 @@ namespace
                             == Theme)
                             ? winrt::Windows::UI::Xaml::ElementTheme::Dark
                             : winrt::Windows::UI::Xaml::ElementTheme::Light);
+                    // The islands deliberately leave regions of their XAML
+                    // content transparent (e.g. the address bar bottom), so
+                    // the DWM backdrop shows through. The backdrop follows
+                    // the SYSTEM theme and turned those regions into an
+                    // opaque black bar while the inverted theme had the
+                    // application light on a dark-theme system. Give every
+                    // island root an opaque background that follows the
+                    // application theme instead. Only the islands created
+                    // with the Mile.Xaml.ContentWindow class are touched;
+                    // popup sources keep their own self-painted flyout
+                    // presenters.
+                    WCHAR WindowClassName[64] = {};
+                    if (::GetClassNameW(
+                        WindowHandle,
+                        WindowClassName,
+                        (int)(std::size(WindowClassName))) &&
+                        0 == std::wcscmp(
+                            WindowClassName,
+                            L"Mile.Xaml.ContentWindow"))
+                    {
+                        const winrt::Windows::UI::Xaml::Media::SolidColorBrush
+                            IslandBackgroundBrush =
+                                winrt::Windows::UI::Xaml::Media::SolidColorBrush(
+                                    (winrt::Windows::UI::Xaml::ApplicationTheme::Dark == Theme)
+                                        ? winrt::Windows::UI::Color{
+                                              0xFF, 0x20, 0x20, 0x20 }
+                                        : winrt::Windows::UI::Color{
+                                              0xFF, 0xFF, 0xFF, 0xFF });
+                        if (auto PanelRoot = RootElement.try_as<
+                            winrt::Windows::UI::Xaml::Controls::Panel>())
+                        {
+                            PanelRoot.Background(IslandBackgroundBrush);
+                        }
+                        else if (auto ControlRoot = RootElement.try_as<
+                            winrt::Windows::UI::Xaml::Controls::Control>())
+                        {
+                            ControlRoot.Background(IslandBackgroundBrush);
+                        }
+                        else if (auto BorderRoot = RootElement.try_as<
+                            winrt::Windows::UI::Xaml::Controls::Border>())
+                        {
+                            BorderRoot.Background(IslandBackgroundBrush);
+                        }
+                    }
                     // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
                     K7ThemeDebugTrace(
                         L"K7ModernApplyXamlWindowTheme: hwnd=%08X theme applied",
