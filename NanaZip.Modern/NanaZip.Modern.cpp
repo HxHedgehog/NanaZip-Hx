@@ -285,21 +285,75 @@ namespace
                                               0xFF, 0x20, 0x20, 0x20 }
                                         : winrt::Windows::UI::Color{
                                               0xFF, 0xFF, 0xFF, 0xFF });
-                        if (auto PanelRoot = RootElement.try_as<
-                            winrt::Windows::UI::Xaml::Controls::Panel>())
+                        auto TryPaintBackground = [&](
+                            winrt::Windows::UI::Xaml::FrameworkElement const&
+                                Element) -> bool
                         {
-                            PanelRoot.Background(IslandBackgroundBrush);
-                        }
-                        else if (auto ControlRoot = RootElement.try_as<
-                            winrt::Windows::UI::Xaml::Controls::Control>())
+                            if (auto PanelRoot = Element.try_as<
+                                winrt::Windows::UI::Xaml::Controls::Panel>())
+                            {
+                                PanelRoot.Background(IslandBackgroundBrush);
+                                return true;
+                            }
+                            if (auto ControlRoot = Element.try_as<
+                                winrt::Windows::UI::Xaml::Controls::Control>())
+                            {
+                                ControlRoot.Background(IslandBackgroundBrush);
+                                return true;
+                            }
+                            if (auto BorderRoot = Element.try_as<
+                                winrt::Windows::UI::Xaml::Controls::Border>())
+                            {
+                                BorderRoot.Background(IslandBackgroundBrush);
+                                return true;
+                            }
+                            if (auto PresenterRoot = Element.try_as<
+                                winrt::Windows::UI::Xaml::Controls::ContentPresenter>())
+                            {
+                                PresenterRoot.Background(IslandBackgroundBrush);
+                                return true;
+                            }
+                            return false;
+                        };
+                        // The content root type varies per island. Try the
+                        // root first and walk the first layers of the visual
+                        // tree otherwise.
+                        if (!TryPaintBackground(RootElement))
                         {
-                            ControlRoot.Background(IslandBackgroundBrush);
+                            bool Painted = false;
+                            try
+                            {
+                                for (int Layer = 0; Layer < 2 && !Painted;
+                                    ++Layer)
+                                {
+                                    int Count = winrt::Windows::UI::Xaml::Media::VisualTreeHelper::GetChildrenCount(
+                                        RootElement);
+                                    for (int Index = 0; Index < Count; ++Index)
+                                    {
+                                        auto Child = winrt::Windows::UI::Xaml::Media::VisualTreeHelper::GetChild(
+                                            RootElement,
+                                            Index);
+                                        auto ChildElement = Child.try_as<
+                                            winrt::Windows::UI::Xaml::FrameworkElement>();
+                                        if (ChildElement &&
+                                            TryPaintBackground(ChildElement))
+                                        {
+                                            Painted = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            catch (...)
+                            {
+                            }
                         }
-                        else if (auto BorderRoot = RootElement.try_as<
-                            winrt::Windows::UI::Xaml::Controls::Border>())
-                        {
-                            BorderRoot.Background(IslandBackgroundBrush);
-                        }
+                        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+                        K7ThemeDebugTrace(
+                            L"K7ModernApplyXamlWindowTheme: hwnd=%08X background painted (root=%ws)",
+                            (DWORD)(DWORD_PTR)WindowHandle,
+                            winrt::get_class_name(RootElement).c_str());
+                        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
                     }
                     // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
                     K7ThemeDebugTrace(

@@ -678,6 +678,68 @@ namespace
         return false;
     }
 
+    static UINT K7GetDeferredThemeApplyMessage()
+    {
+        static UINT Message = ::RegisterWindowMessageW(
+            L"NanaZip.K7User.DeferredThemeApply");
+        return Message;
+    }
+
+    static void K7ApplyWindowThemeForCreate(HWND hWnd)
+    {
+        ::MileAllowDarkModeForWindow(
+            hWnd,
+            TRUE);
+
+        g_ThreadContext.MicaBackdropAvailable =
+            (S_OK == ::MileEnableImmersiveDarkModeForWindow(
+                hWnd,
+                ShouldAppsUseDarkMode()));
+
+        bool ShouldExtendFrame = (
+            ShouldAppsUseDarkMode() &&
+            ::IsStandardDynamicRangeMode() &&
+            g_ThreadContext.MicaBackdropAvailable);
+
+        ::ApplyWindowSystemBackdrop(hWnd, ShouldExtendFrame);
+
+        if (ShouldExtendFrame)
+        {
+            MARGINS Margins = { -1 };
+            ::DwmExtendFrameIntoClientArea(hWnd, &Margins);
+        }
+        else if (::IsFileManagerWindow(hWnd))
+        {
+            UINT DpiValue = ::GetDpiForWindow(hWnd);
+
+            MARGINS Margins = {};
+            Margins.cyTopHeight =
+                ::MulDiv(84, DpiValue, USER_DEFAULT_SCREEN_DPI);
+            Margins.cyBottomHeight =
+                ::MulDiv(32, DpiValue, USER_DEFAULT_SCREEN_DPI);
+            ::DwmExtendFrameIntoClientArea(hWnd, &Margins);
+        }
+
+        ::RefreshWindowTheme(hWnd);
+
+        wchar_t ClassName[256] = {};
+        if (0 != ::GetClassNameW(
+            hWnd,
+            ClassName,
+            MO_ARRAY_SIZE(ClassName)))
+        {
+            if (0 == std::wcscmp(ClassName, WC_TABCONTROLW))
+            {
+                ::SetWindowLongPtrW(
+                    hWnd,
+                    GWL_STYLE,
+                    (::GetWindowLongPtrW(hWnd, GWL_STYLE) & ~TCS_BUTTONS)
+                    | TCS_TABS);
+                ::SetWindowTheme(hWnd, nullptr, nullptr);
+            }
+        }
+    }
+
     LRESULT CALLBACK WindowSubclassCallback(
         _In_ HWND hWnd,
         _In_ UINT uMsg,
@@ -688,6 +750,22 @@ namespace
     {
         UNREFERENCED_PARAMETER(uIdSubclass);
         UNREFERENCED_PARAMETER(dwRefData);
+
+        if (uMsg == ::K7GetDeferredThemeApplyMessage())
+        {
+            // Runs after every synchronous WM_CREATE handler of the window
+            // (the framework's own initialization included), so the theme
+            // decision applied here wins over any default backdrop the
+            // framework set during initialization.
+            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            K7ThemeDebugTrace(
+                L"DeferredThemeApply: hwnd=%08X dark=%d",
+                (DWORD)(DWORD_PTR)hWnd,
+                (int)ShouldAppsUseDarkMode());
+            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+            ::K7ApplyWindowThemeForCreate(hWnd);
+            return 0;
+        }
 
         switch (uMsg)
         {
@@ -838,57 +916,18 @@ namespace
                 (DWORD)(DWORD_PTR)hWnd,
                 uMsg);
             // *** END TEMPORARY DEBUG INSTRUMENTATION ***
-            ::MileAllowDarkModeForWindow(
+            ::K7ApplyWindowThemeForCreate(hWnd);
+            // The framework applies its own default backdrop during window
+            // initialization, which can run after this WM_CREATE handler
+            // and overwrite the decision above (observed as an opaque black
+            // bar when the inverted theme had the application light on a
+            // dark-theme system). Post a deferred re-apply that runs once
+            // every synchronous initialization completed.
+            ::PostMessageW(
                 hWnd,
-                TRUE);
-
-            g_ThreadContext.MicaBackdropAvailable =
-                (S_OK == ::MileEnableImmersiveDarkModeForWindow(
-                    hWnd,
-                    ShouldAppsUseDarkMode()));
-
-            bool ShouldExtendFrame = (
-                ShouldAppsUseDarkMode() &&
-                ::IsStandardDynamicRangeMode() &&
-                g_ThreadContext.MicaBackdropAvailable);
-
-            ::ApplyWindowSystemBackdrop(hWnd, ShouldExtendFrame);
-
-            if (ShouldExtendFrame)
-            {
-                MARGINS Margins = { -1 };
-                ::DwmExtendFrameIntoClientArea(hWnd, &Margins);
-            }
-            else if (::IsFileManagerWindow(hWnd))
-            {
-                UINT DpiValue = ::GetDpiForWindow(hWnd);
-
-                MARGINS Margins = {};
-                Margins.cyTopHeight =
-                    ::MulDiv(84, DpiValue, USER_DEFAULT_SCREEN_DPI);
-                Margins.cyBottomHeight =
-                    ::MulDiv(32, DpiValue, USER_DEFAULT_SCREEN_DPI);
-                ::DwmExtendFrameIntoClientArea(hWnd, &Margins);
-            }
-
-            ::RefreshWindowTheme(hWnd);
-
-            wchar_t ClassName[256] = {};
-            if (0 != ::GetClassNameW(
-                hWnd,
-                ClassName,
-                MO_ARRAY_SIZE(ClassName)))
-            {
-                if (0 == std::wcscmp(ClassName, WC_TABCONTROLW))
-                {
-                    ::SetWindowLongPtrW(
-                        hWnd,
-                        GWL_STYLE,
-                        (::GetWindowLongPtrW(hWnd, GWL_STYLE) & ~TCS_BUTTONS)
-                        | TCS_TABS);
-                    ::SetWindowTheme(hWnd, nullptr, nullptr);
-                }
-            }
+                ::K7GetDeferredThemeApplyMessage(),
+                0,
+                0);
 
             break;
         }
@@ -900,6 +939,37 @@ namespace
                 ClassName,
                 MO_ARRAY_SIZE(ClassName)))
             {
+                if (0 == std::wcscmp(ClassName, L"Mile.Xaml.ContentWindow"))
+                {
+                    // The XAML islands deliberately leave regions of their
+                    // content transparent so the backdrop shows through.
+                    // Those transparent composition pixels reveal the window
+                    // redirection surface beneath, which is never erased and
+                    // composes as an opaque black bar when the inverted
+                    // theme turned the application light on a dark-theme
+                    // system. Erase the surface with the application theme
+                    // color so the transparent regions blend into the
+                    // application appearance instead.
+                    RECT ClientArea = {};
+                    if (::GetClientRect(hWnd, &ClientArea))
+                    {
+                        ::FillRect(
+                            reinterpret_cast<HDC>(wParam),
+                            &ClientArea,
+                            ShouldAppsUseDarkMode()
+                                ? ::GetDarkModeBackgroundBrush()
+                                : reinterpret_cast<HBRUSH>(
+                                    ::GetStockObject(WHITE_BRUSH)));
+                        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+                        K7ThemeDebugTrace(
+                            L"WM_ERASEBKGND island hwnd=%08X dark=%d",
+                            (DWORD)(DWORD_PTR)hWnd,
+                            (int)ShouldAppsUseDarkMode());
+                        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+                        return TRUE;
+                    }
+                }
+
                 if (ShouldAppsUseDarkMode() &&
                     0 == std::wcscmp(ClassName, STATUSCLASSNAMEW))
                 {
