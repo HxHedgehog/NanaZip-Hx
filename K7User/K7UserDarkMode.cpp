@@ -458,6 +458,21 @@ namespace
             ::IsNanaZipOwnedWindow(WindowHandle));
     }
 
+    // SetWindowTheme keeps the theme handle a control opened earlier alive
+    // when only the process-wide preferred app mode changed, and assigning
+    // the same class name the window already has is a no-op. Detach the
+    // current association with an empty class first, so the subsequent
+    // assignment makes uxtheme reopen the handle against BOTH the new class
+    // and the refreshed light/dark policy. Pass nullptr in ThemeClass to
+    // reset the window to its default class.
+    static void ForceWindowThemeClass(
+        _In_ HWND WindowHandle,
+        _In_opt_ LPCWSTR ThemeClass)
+    {
+        ::SetWindowTheme(WindowHandle, L"", nullptr);
+        ::SetWindowTheme(WindowHandle, ThemeClass, nullptr);
+    }
+
     static void RefreshWindowTheme(
         _In_ HWND WindowHandle)
     {
@@ -474,14 +489,6 @@ namespace
             ClassName,
             MO_ARRAY_SIZE(ClassName)))
         {
-            // Every themed control needs WM_THEMECHANGED to reopen its theme
-            // handle after the immersive color policy has been refreshed by
-            // ApplyProcessThemePolicy. Controls which do not receive it keep
-            // rendering with the stale theme state and can stop drawing
-            // anything at all once repainted (e.g. list views and status
-            // bars ending up blank after the inverted theme is applied).
-            ::SendMessageW(WindowHandle, WM_THEMECHANGED, 0, 0);
-
             if (0 == std::wcscmp(ClassName, WC_BUTTONW))
             {
                 if (::IsThemeInverted())
@@ -492,17 +499,17 @@ namespace
                     // dark and a reset for effective light.
                     if (ShouldAppsUseDarkMode())
                     {
-                        ::SetWindowTheme(WindowHandle, L"DarkMode_Explorer", nullptr);
+                        ::ForceWindowThemeClass(WindowHandle, L"DarkMode_Explorer");
                     }
                     else
                     {
-                        ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                        ::ForceWindowThemeClass(WindowHandle, nullptr);
                     }
                 }
                 else
                 {
                     // Follow the system appearance (upstream behavior).
-                    ::SetWindowTheme(WindowHandle, L"Explorer", nullptr);
+                    ::ForceWindowThemeClass(WindowHandle, L"Explorer");
                 }
             }
             else if (
@@ -517,22 +524,21 @@ namespace
                     // freshly created controls keep the system color.
                     if (ShouldAppsUseDarkMode())
                     {
-                        ::SetWindowTheme(
+                        ::ForceWindowThemeClass(
                             WindowHandle,
                             (0 == std::wcscmp(ClassName, WC_COMBOBOXW))
                                 ? L"DarkMode_CFD"
-                                : L"DarkMode_Explorer",
-                            nullptr);
+                                : L"DarkMode_Explorer");
                     }
                     else
                     {
-                        ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                        ::ForceWindowThemeClass(WindowHandle, nullptr);
                     }
                 }
                 else
                 {
                     // Follow the system appearance (upstream behavior).
-                    ::SetWindowTheme(WindowHandle, L"CFD", nullptr);
+                    ::ForceWindowThemeClass(WindowHandle, L"CFD");
                 }
                 ::MileAllowDarkModeForWindow(WindowHandle, TRUE);
             }
@@ -544,12 +550,12 @@ namespace
                     // default header class, otherwise the cached ItemsView
                     // surface keeps rendering as the black "name" column bar
                     // after a restart.
-                    ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                    ::ForceWindowThemeClass(WindowHandle, nullptr);
                 }
                 else
                 {
                     // Native themes and inverted dark both use ItemsView.
-                    ::SetWindowTheme(WindowHandle, L"ItemsView", nullptr);
+                    ::ForceWindowThemeClass(WindowHandle, L"ItemsView");
                 }
             }
             else if (0 == std::wcscmp(ClassName, WC_TREEVIEWW))
@@ -561,13 +567,13 @@ namespace
                 {
                     if (ShouldAppsUseDarkMode())
                     {
-                        ::SetWindowTheme(WindowHandle, L"DarkMode_Explorer", nullptr);
+                        ::ForceWindowThemeClass(WindowHandle, L"DarkMode_Explorer");
                         TreeView_SetBkColor(WindowHandle, g_DarkModeBackgroundColor);
                         TreeView_SetTextColor(WindowHandle, g_DarkModeForegroundColor);
                     }
                     else
                     {
-                        ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                        ::ForceWindowThemeClass(WindowHandle, nullptr);
                         TreeView_SetBkColor(WindowHandle, CLR_DEFAULT);
                         TreeView_SetTextColor(WindowHandle, CLR_DEFAULT);
                     }
@@ -577,11 +583,11 @@ namespace
             {
                 if (::IsThemeInverted() && !ShouldAppsUseDarkMode())
                 {
-                    ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                    ::ForceWindowThemeClass(WindowHandle, nullptr);
                 }
                 else
                 {
-                    ::SetWindowTheme(WindowHandle, L"ItemsView", nullptr);
+                    ::ForceWindowThemeClass(WindowHandle, L"ItemsView");
                 }
 
                 if (ShouldAppsUseDarkMode())
@@ -655,6 +661,24 @@ namespace
                         reinterpret_cast<LPARAM>(&ColorScheme));
                 }
             }
+
+            // The class (and the explicit list/tree colors) are now in
+            // their final state. Tell the control to close and reopen its
+            // uxtheme handle against this class and the refreshed preferred
+            // app mode, then repaint synchronously. Without this, toggling
+            // the inverted theme off on a dark system leaves the surfaces
+            // that were opened under the previous forced policy (a white
+            // header row and light-gray buttons) until the process is
+            // restarted, because SetWindowTheme neither reopens the cached
+            // handle by itself nor invalidates the control, and a plain
+            // InvalidateRect on the clipped parent never reaches the
+            // child windows.
+            ::SendMessageW(WindowHandle, WM_THEMECHANGED, 0, 0);
+            ::RedrawWindow(
+                WindowHandle,
+                nullptr,
+                nullptr,
+                RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_UPDATENOW);
         }
     }
 
@@ -946,7 +970,12 @@ namespace
                 },
                     0);
 
-                ::InvalidateRect(hWnd, nullptr, TRUE);
+                ::RedrawWindow(
+                    hWnd,
+                    nullptr,
+                    nullptr,
+                    RDW_INVALIDATE | RDW_ERASE | RDW_FRAME |
+                    RDW_ALLCHILDREN | RDW_UPDATENOW);
             }
 
             break;
@@ -2135,39 +2164,50 @@ namespace
         // and can be reopened (and thus invalidated) at any time, while the
         // class name of an opened theme data is stable.
         //
-        // Popup menus are hand-drawn ONLY for inverted dark. When the
-        // application simply follows a dark system, the system draws the
-        // native dark menu itself, including the radio bullet and check
-        // glyphs; intercepting those parts hides the glyphs ("View" menu).
-        // In inverted dark (a light system forced dark) uxtheme hands out
-        // light menu data, so every menu part has to be painted explicitly.
-        if (::IsThemeInverted() && ::IsThemeClass(hTheme, L"Menu"))
+        // Popup menus are painted explicitly whenever the effective theme
+        // is dark, so the radio bullet/check glyphs keep a high-contrast
+        // light ink and the popup border stays visible both when following
+        // a dark system and when the dark appearance is forced for the
+        // inverted theme (in the latter case uxtheme would otherwise hand
+        // out the system light menu data).
+        if (::IsThemeClass(hTheme, L"Menu"))
         {
-            // Popup menus use the Menu theme class. uxtheme hands out the
-            // system (light) theme data for menus even when the process is
-            // in ForceDark mode, and the private menu theme cache inside
-            // uxtheme is not reliably flushable, so freshly opened popup
-            // menus kept rendering with the light system appearance after a
-            // restart with the inverted theme already enabled. Draw every
-            // menu part explicitly instead; the colors mirror the menu bar
-            // painting in the WM_UAHDRAWMENU handler above.
+            // The Menu class part ids from vsstyle.h are easy to get wrong
+            // because the check parts sit BEFORE the gutter/item parts:
+            //
+            //   9  MENU_POPUPBACKGROUND
+            //   10 MENU_POPUPBORDERS
+            //   11 MENU_POPUPCHECK         (the check mark / radio bullet)
+            //   12 MENU_POPUPCHECKBACKGROUND
+            //   13 MENU_POPUPGUTTER
+            //   14 MENU_POPUPITEM
+            //   15 MENU_POPUPSEPARATOR
+            //   16 MENU_POPUPSUBMENU
+            //
+            // The check background and gutter surfaces are left
+            // unpainted on purpose: the part 14 item band (or the popup
+            // background) already provides the surface, and filling an own
+            // color here paints a dark notch over the hovered row. The
+            // colors mirror the menu bar painting in the WM_UAHDRAWMENU
+            // handler above.
             switch (iPartId)
             {
-            case 9:  // MENU_POPUPBACKGROUND
-            case 10: // MENU_POPUPBORDERS
-            case 11: // MENU_POPUPGUTTER
+            case 9: // MENU_POPUPBACKGROUND
             {
                 ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
                 return S_OK;
             }
-            case 13: // MENU_POPUPCHECKBACKGROUND
+            case 10: // MENU_POPUPBORDERS
             {
-                ::FillRect(
-                    hdc,
-                    pRect,
-                    (3 == iStateId || 6 == iStateId)
-                        ? ::GetDarkModeMenuSelectedBackgroundBrush()
-                        : ::GetDarkModeBackgroundBrush());
+                ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
+                ::FrameRect(hdc, pRect, ::GetDarkModeBorderBrush());
+                return S_OK;
+            }
+            case 12: // MENU_POPUPCHECKBACKGROUND
+            case 13: // MENU_POPUPGUTTER
+            {
+                // Keep the item band/popup background painted by parts 9
+                // and 14 visible through the check column.
                 return S_OK;
             }
             case 14: // MENU_POPUPITEM
@@ -2191,12 +2231,12 @@ namespace
                 ::FillRect(hdc, &LineRect, ::GetDarkModeBorderBrush());
                 return S_OK;
             }
-            case 12: // MENU_POPUPCHECK
+            case 11: // MENU_POPUPCHECK
             {
-                // uxtheme hands out the light theme data for menus even in
-                // ForceDark mode, so the system check mark and radio bullet
-                // glyphs render in dark ink that is invisible on the dark
-                // check background painted above. Draw them manually.
+                // MENU_POPUPCHECK states: 1 = check normal,
+                // 2 = check disabled, 3 = bullet normal, 4 = bullet
+                // disabled. The light theme data hands out dark ink for
+                // these glyphs; draw the glyph manually in light ink.
                 COLORREF GlyphColor =
                     (2 == iStateId || 4 == iStateId)
                         ? RGB(109, 109, 109)
@@ -2214,17 +2254,20 @@ namespace
                     }
                     LONG CenterX = (pRect->left + pRect->right) / 2;
                     LONG CenterY = (pRect->top + pRect->bottom) / 2;
-                    RECT BulletRect =
-                    {
-                        CenterX - Radius,
-                        CenterY - Radius,
-                        CenterX + Radius + 1,
-                        CenterY + Radius + 1
-                    };
                     HBRUSH BulletBrush = ::CreateSolidBrush(GlyphColor);
                     if (BulletBrush)
                     {
-                        ::FillRect(hdc, &BulletRect, BulletBrush);
+                        HGDIOBJ OldBrush = ::SelectObject(hdc, BulletBrush);
+                        HGDIOBJ OldPen =
+                            ::SelectObject(hdc, ::GetStockObject(NULL_PEN));
+                        ::Ellipse(
+                            hdc,
+                            CenterX - Radius,
+                            CenterY - Radius,
+                            CenterX + Radius + 1,
+                            CenterY + Radius + 1);
+                        ::SelectObject(hdc, OldPen);
+                        ::SelectObject(hdc, OldBrush);
                         ::DeleteObject(BulletBrush);
                     }
                 }
@@ -2263,9 +2306,9 @@ namespace
             default:
             {
                 // The remaining parts (16 = MENU_POPUPSUBMENU,
-                // 7/8 = menu bar surfaces) carry
-                // glyphs or already-dark surfaces. Paint the dark surface
-                // first and let the system glyph render on top of it.
+                // 7/8 = menu bar surfaces) carry glyphs or already-dark
+                // surfaces. Paint the dark surface first and let the
+                // system glyph render on top of it.
                 ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
                 return ::OriginalDrawThemeBackground(
                     hTheme,
@@ -3017,7 +3060,17 @@ EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme()
         },
             0);
 
-        ::InvalidateRect(hWnd, nullptr, TRUE);
+        // Repaint the whole window tree synchronously, including nested
+        // controls such as the list view's header child window: the XAML
+        // island hosts clip their children, so invalidating only the
+        // top-level window would leave the refreshed controls on their
+        // stale light/dark surface until they are recreated.
+        ::RedrawWindow(
+            hWnd,
+            nullptr,
+            nullptr,
+            RDW_INVALIDATE | RDW_ERASE | RDW_FRAME |
+            RDW_ALLCHILDREN | RDW_UPDATENOW);
         return TRUE;
     },
         0);
