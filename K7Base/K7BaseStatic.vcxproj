@@ -14,13 +14,13 @@
   <Import Project="..\NanaZip.Project\NanaZip.Project.Runtime.props" />
   <ItemGroup>
     <PackageReference Include="Mile.Mobility">
-      <Version>1.1.602</Version>
+      <Version>1.1.678</Version>
     </PackageReference>
     <PackageReference Include="Mile.Windows.Internal">
-      <Version>1.0.3648</Version>
+      <Version>1.0.3729</Version>
     </PackageReference>
     <PackageReference Include="Mile.Detours">
-      <Version>1.0.2180</Version>
+      <Version>1.0.2442</Version>
     </PackageReference>
     <PackageReference Include="Mile.Windows.Helpers">
       <Version>1.0.1171</Version>
