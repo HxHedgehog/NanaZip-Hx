@@ -1,4 +1,4 @@
-// Windows/CommonDialog.cpp
+﻿// Windows/CommonDialog.cpp
 
 #include "StdAfx.h"
 
@@ -228,6 +228,21 @@ bool MyGetOpenFileName(HWND hwnd, LPCWSTR title,
     // light-mode systems, even when the process forced the dark uxtheme
     // mode, producing an unreadable all-white dialog inside the inverted
     // theme. The modern IFileOpenDialog honors the process dark mode.
+    //
+    // Suspend the inverted theme for the ENTIRE native dialog lifetime,
+    // starting BEFORE the IFileOpenDialog object is created: its DirectUI
+    // internals cache the process appearance during creation, so suspending
+    // only around Show() leaves the dialog half native / half forced. The
+    // RAII guard also covers the result retrieval, the release and the
+    // legacy fallback below, and guarantees the theme is resumed on every
+    // exit path (including cancel and exceptions).
+    struct NK7NativeThemeDialogScope
+    {
+      NK7NativeThemeDialogScope() { ::K7UserSuspendDarkMode(); }
+      ~NK7NativeThemeDialogScope() { ::K7UserResumeDarkMode(); }
+    };
+    NK7NativeThemeDialogScope NativeThemeDialogScope;
+
     WCHAR buf[kBufSize];
     MyStringCopy(buf, filePath);
 
@@ -292,14 +307,9 @@ bool MyGetOpenFileName(HWND hwnd, LPCWSTR title,
         Dialog->SetFileName(Name);
       }
 
-      // The DirectUI internals of the modern dialog bind uxtheme via
-      // delay-load and bypass the inverted theme detours, so the dialog can
-      // never be styled consistently in the inverted theme. Show it with
-      // its native system appearance instead: suspend the inverted theme
-      // while the dialog is visible.
-      ::K7UserSuspendDarkMode();
+      // The native theme suspend scope (NativeThemeDialogScope) keeps the
+      // whole dialog on the unmodified system appearance for its lifetime.
       const HRESULT ShowResult = Dialog->Show(hwnd);
-      ::K7UserResumeDarkMode();
 
       if (SUCCEEDED(ShowResult))
       {

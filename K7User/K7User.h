@@ -1,4 +1,4 @@
-/*
+﻿/*
  * PROJECT:    NanaZip Platform User Library (K7User)
  * FILE:       K7User.h
  * PURPOSE:    Definition for NanaZip Platform User Public Interfaces
@@ -36,12 +36,15 @@ EXTERN_C MO_RESULT MOAPI K7UserInitializeDarkModeSupport();
 EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme();
 
 /**
- * @brief Temporarily suspends the inverted dark theme for the current thread.
- *        Used around system common dialogs (e.g. IFileOpenDialog) whose
- *        DirectUI internals cannot be styled by the inverted theme detours,
- *        so they are shown with their native system appearance instead.
- * @remark This function is reference counted. Every successful call must be
- *         balanced by a matching K7UserResumeDarkMode call.
+ * @brief Suspends the inverted theme so the process follows the system
+ *        appearance. Used to show system common dialogs (e.g.
+ *        IFileOpenDialog) with their native, unmodified look: their
+ *        DirectUI internals cache the process appearance when the dialog
+ *        object is created, so this must be called BEFORE CoCreateInstance
+ *        and kept active until the dialog object is released (an RAII scope
+ *        is recommended), not merely around its Show call.
+ * @remark This function is reference counted and supports nesting. Every
+ *         call must be balanced by a matching K7UserResumeDarkMode call.
  */
 EXTERN_C MO_RESULT MOAPI K7UserSuspendDarkMode();
 

@@ -1,4 +1,4 @@
-// Panel.cpp
+﻿// Panel.cpp
 
 #include "StdAfx.h"
 
@@ -1161,6 +1161,19 @@ void CPanel::AddToExistingArchive()
     const UString &ArchivePath = Link.VirtualPath;
 
     // MyBrowseForFile doesn't have multiselect, so use IFileOpenDialog directly
+    //
+    // Suspend the inverted theme for the ENTIRE native dialog lifetime,
+    // starting BEFORE the IFileOpenDialog object is created: its DirectUI
+    // internals cache the process appearance during creation, so suspending
+    // only around Show() leaves the dialog half native / half forced. The
+    // RAII guard guarantees the theme is resumed on every exit path below.
+    struct NK7NativeThemeDialogScope
+    {
+        NK7NativeThemeDialogScope() { ::K7UserSuspendDarkMode(); }
+        ~NK7NativeThemeDialogScope() { ::K7UserResumeDarkMode(); }
+    };
+    NK7NativeThemeDialogScope NativeThemeDialogScope;
+
     CMyComPtr<IFileOpenDialog> FileDialog;
     if (FAILED(::CoCreateInstance(
         CLSID_FileOpenDialog,
@@ -1192,11 +1205,9 @@ void CPanel::AddToExistingArchive()
         }
     }
 
-    // The DirectUI internals of the modern dialog bypass the inverted theme
-    // detours, so show it with its native system appearance.
-    ::K7UserSuspendDarkMode();
+    // The native theme suspend scope (NativeThemeDialogScope) keeps the
+    // whole dialog on the unmodified system appearance for its lifetime.
     const HRESULT ShowResult = FileDialog->Show(GetParent());
-    ::K7UserResumeDarkMode();
 
     CMyComPtr<IShellItemArray> Items;
     if (FAILED(ShowResult) ||

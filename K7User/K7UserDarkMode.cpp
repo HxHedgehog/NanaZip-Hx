@@ -1,4 +1,4 @@
-/*
+﻿/*
  * PROJECT:    NanaZip Platform User Library (K7User)
  * FILE:       K7UserDarkMode.cpp
  * PURPOSE:    Implementation for NanaZip Platform User Dark Mode Support
@@ -38,8 +38,6 @@ EXTERN_C HRESULT WINAPI GetThemeClass(
 #include <CommCtrl.h>
 #pragma comment(lib,"comctl32.lib")
 
-#include <stdarg.h> // *** TEMPORARY DEBUG INSTRUMENTATION ***
-
 // TODO: Move some workaround for NanaZip.UI.* to this.
 
 namespace
@@ -56,62 +54,35 @@ namespace
     const COLORREF g_DarkModeBorderColor = RGB(127, 127, 127);
     const COLORREF g_DarkModeMenuSelectedBackgroundColor = RGB(65, 65, 65);
 
-    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-    static void K7ThemeDebugTrace(
-        _In_z_ PCWSTR Format,
-        ...)
+    // Whether the user enabled "Invert Theme" for the currently applied
+    // policy. This distinguishes an application that is dark because it
+    // follows a dark system (native dark; the system draws menus, glyphs
+    // and dialogs by itself) from one that is forced dark against a light
+    // system (inverted dark; the system hands out light theme data and the
+    // workarounds below are required).
+    static volatile LONG g_ThemeInverted = 0;
+
+    static bool IsThemeInverted()
     {
-        SYSTEMTIME Time = {};
-        ::GetLocalTime(&Time);
-
-        WCHAR Buffer[1024] = {};
-        int Length = wsprintfW(
-            Buffer,
-            L"[%02u:%02u:%02u.%03u][%u:%u] ",
-            Time.wHour,
-            Time.wMinute,
-            Time.wSecond,
-            Time.wMilliseconds,
-            ::GetCurrentProcessId(),
-            ::GetCurrentThreadId());
-
-        va_list Arguments;
-        va_start(Arguments, Format);
-        Length += wvsprintfW(Buffer + Length, Format, Arguments);
-        va_end(Arguments);
-
-        Buffer[Length++] = L'\r';
-        Buffer[Length++] = L'\n';
-        Buffer[Length] = L'\0';
-
-        OutputDebugStringW(Buffer);
-
-        WCHAR Path[MAX_PATH + 32] = {};
-        if (0 != ::GetTempPathW(MAX_PATH, Path))
-        {
-            lstrcatW(Path, L"NanaZipThemeDebug.log");
-            HANDLE FileHandle = ::CreateFileW(
-                Path,
-                FILE_APPEND_DATA,
-                FILE_SHARE_READ | FILE_SHARE_WRITE,
-                nullptr,
-                OPEN_ALWAYS,
-                FILE_ATTRIBUTE_NORMAL,
-                nullptr);
-            if (INVALID_HANDLE_VALUE != FileHandle)
-            {
-                DWORD Written = 0;
-                ::WriteFile(
-                    FileHandle,
-                    Buffer,
-                    Length * sizeof(WCHAR),
-                    &Written,
-                    nullptr);
-                ::CloseHandle(FileHandle);
-            }
-        }
+        return (0 != g_ThemeInverted);
     }
-    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+
+    static void SetThemeInverted(
+        _In_ bool Value)
+    {
+        ::InterlockedExchange(&g_ThemeInverted, Value ? 1 : 0);
+    }
+
+    // >0 while a native system dialog (IFileOpenDialog) owns the theme.
+    // During such a scope the process follows the SYSTEM appearance and
+    // every inversion-only intervention (class redirects, deferred theme
+    // application, ...) is bypassed so system windows render natively.
+    static volatile LONG g_NativeThemeSuspendCounter = 0;
+
+    static bool IsNativeThemeSuspended()
+    {
+        return (0 != g_NativeThemeSuspendCounter);
+    }
 
     static bool K7UserReadThemeInvert()
     {
@@ -146,20 +117,18 @@ namespace
 
     static bool ComputeShouldAppsUseDarkMode()
     {
-        const bool BaseShouldUseDarkMode =
+        const bool SystemShouldUseDarkMode =
             ::MileShouldAppsUseDarkMode() &&
             !::MileShouldAppsUseHighContrastMode();
-        const bool InvertTheme = ::K7UserReadThemeInvert();
-        const bool Result = InvertTheme ? !BaseShouldUseDarkMode
-                                        : BaseShouldUseDarkMode;
-        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-        K7ThemeDebugTrace(
-            L"ComputeShouldAppsUseDarkMode: systemDark=%d invert=%d => dark=%d",
-            (int)BaseShouldUseDarkMode,
-            (int)InvertTheme,
-            (int)Result);
-        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
-        return Result;
+        const bool ThemeInverted = ::K7UserReadThemeInvert();
+
+        // Publish the inversion state together with the effective theme so
+        // the detours and window subclasses can tell native dark apart from
+        // inverted dark.
+        ::SetThemeInverted(ThemeInverted);
+
+        return ThemeInverted ? !SystemShouldUseDarkMode
+                             : SystemShouldUseDarkMode;
     }
 
     // uxtheme ordinal 135 (SetPreferredAppMode). The Mile headers available
@@ -201,35 +170,33 @@ namespace
     static void ApplyProcessThemePolicy(
         _In_ bool ShouldUseDarkMode)
     {
-        // The process-wide uxtheme color mode must follow the possibly
-        // inverted theme state instead of always following the system
-        // setting. With the inverted theme enabled, AUTO would keep
-        // rendering theme-drawn controls (list view items, headers, buttons)
-        // with the system light mode styles while the non-theme rendering
-        // paths (DWM attributes, background erasing, control color messages)
-        // already use the inverted colors, resulting in unreadable
-        // light-on-light or dark-on-dark content. For the non-inverted cases
-        // DARK/DEFAULT produce the same results as AUTO because
-        // ShouldUseDarkMode is derived from the system setting there.
-        // System components which read the uxtheme ShouldAppsUseDarkMode
-        // export directly (e.g. the common file dialogs) only honor the
-        // forced modes, so FORCE_DARK is required on light-theme systems
-        // with the inverted theme enabled.
-        // FORCE_LIGHT is required for the mirrored case: a dark-theme system
-        // with the inverted theme enabled must hand out light theme data to
-        // the classic controls (namespace tree, rebar, menus), otherwise
-        // they keep rendering with the system dark data on top of the light
-        // XAML surfaces, producing unreadable black bars.
-        ::K7SetPreferredAppMode(
-            ShouldUseDarkMode
-                ? K7PreferredAppMode::ForceDark
-                : K7PreferredAppMode::ForceLight);
+        if (!::IsThemeInverted())
+        {
+            // Follow the system appearance exactly (the upstream behavior).
+            // Do NOT force an app mode here. Forcing Dark even when the
+            // system is already dark diverts the native rendering path for
+            // popup menus and system dialogs, which hides the system
+            // check/radio glyphs ("View" menu) and pollutes native dialogs.
+            // Resetting to Default also undoes a force from a previous
+            // in-session inversion toggle.
+            ::K7SetPreferredAppMode(K7PreferredAppMode::Default);
+        }
+        else
+        {
+            // The application deliberately renders opposite to the system.
+            // System components which read the uxtheme ShouldAppsUseDarkMode
+            // export directly only honor the forced modes, so the opposite
+            // mode has to be forced process-wide.
+            // ForceDark: a light system with the inverted theme enabled.
+            // ForceLight: a dark system with the inverted theme enabled
+            // (otherwise classic controls keep dark data on the light XAML
+            // surfaces, producing unreadable black bars such as the header).
+            ::K7SetPreferredAppMode(
+                ShouldUseDarkMode
+                    ? K7PreferredAppMode::ForceDark
+                    : K7PreferredAppMode::ForceLight);
+        }
         ::MileRefreshImmersiveColorPolicyState();
-        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-        K7ThemeDebugTrace(
-            L"ApplyProcessThemePolicy: dark=%d (SetPreferredAppMode + RefreshImmersiveColorPolicyState)",
-            (int)ShouldUseDarkMode);
-        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     }
 
     static HBRUSH GetDarkModeBackgroundBrush()
@@ -429,99 +396,193 @@ namespace
     };
     thread_local ThreadContext g_ThreadContext;
 
+    // Window classes that belong to the NanaZip File Manager. Inversion-only
+    // theming must stay inside this ownership boundary; system windows such
+    // as the common file dialog (#32770), DirectUI and ShellView surfaces
+    // are never redirected.
+    static bool IsNanaZipWindowClassName(
+        _In_ LPCWSTR ClassName)
+    {
+        return (
+            (0 == std::wcscmp(ClassName, L"NanaZip.Modern.FileManager")) ||
+            (0 == std::wcscmp(ClassName, L"NanaZip::Panel")) ||
+            (nullptr != std::wcsstr(ClassName, L"Mile.Xaml.")));
+    }
+
+    // Decide whether a window belongs to the File Manager by matching its
+    // own class or walking the owner/parent chain. NanaZip dialogs (options,
+    // message boxes) are owned by the File Manager window and are therefore
+    // included; the owner chain is bounded. The common file dialog is also
+    // owned by the File Manager, but it is always shown inside a native
+    // theme suspend scope (see IsNativeThemeSuspended), which takes
+    // precedence and keeps it untouched.
+    static bool IsNanaZipOwnedWindow(
+        _In_opt_ HWND WindowHandle)
+    {
+        HWND Current = WindowHandle;
+        for (unsigned Depth = 0; Current && (Depth < 16); ++Depth)
+        {
+            wchar_t ClassName[256] = {};
+            if (0 != ::GetClassNameW(
+                Current,
+                ClassName,
+                MO_ARRAY_SIZE(ClassName)))
+            {
+                if (::IsNanaZipWindowClassName(ClassName))
+                {
+                    return true;
+                }
+            }
+
+            HWND Next = ::GetWindow(Current, GW_OWNER);
+            if (!Next)
+            {
+                Next = ::GetParent(Current);
+            }
+            if ((!Next) || (Next == Current))
+            {
+                break;
+            }
+            Current = Next;
+        }
+        return false;
+    }
+
+    // Class redirection is skipped while a native system dialog owns the
+    // theme, and it is never applied to windows outside the File Manager
+    // ownership boundary.
+    static bool ShouldApplyManagedThemeToWindow(
+        _In_opt_ HWND WindowHandle)
+    {
+        return (!::IsNativeThemeSuspended() &&
+            ::IsNanaZipOwnedWindow(WindowHandle));
+    }
+
     static void RefreshWindowTheme(
         _In_ HWND WindowHandle)
     {
+        // Keep class redirection inside the File Manager ownership boundary
+        // and out of native system dialog scopes.
+        if (!::ShouldApplyManagedThemeToWindow(WindowHandle))
+        {
+            return;
+        }
+
         wchar_t ClassName[256] = {};
         if (0 != ::GetClassNameW(
             WindowHandle,
             ClassName,
             MO_ARRAY_SIZE(ClassName)))
         {
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            K7ThemeDebugTrace(
-                L"RefreshWindowTheme: hwnd=%08X class=%ws",
-                (DWORD)(DWORD_PTR)WindowHandle,
-                ClassName);
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             // Every themed control needs WM_THEMECHANGED to reopen its theme
             // handle after the immersive color policy has been refreshed by
             // ApplyProcessThemePolicy. Controls which do not receive it keep
             // rendering with the stale theme state and can stop drawing
             // anything at all once repainted (e.g. list views and status
             // bars ending up blank after the inverted theme is applied).
-            // This used to be sent only for unhandled window classes, which
-            // is why only tree views refreshed correctly.
             ::SendMessageW(WindowHandle, WM_THEMECHANGED, 0, 0);
 
             if (0 == std::wcscmp(ClassName, WC_BUTTONW))
             {
-                // The plain "Explorer" subclass has dark variants that follow
-                // the SYSTEM theme state, which turned freshly created buttons
-                // (e.g. the Options property sheet buttons) dark while the
-                // inverted theme had the application light on a dark-theme
-                // system. Only request the dark button class while the
-                // inverted theme is active and reset it otherwise.
-                if (ShouldAppsUseDarkMode())
+                if (::IsThemeInverted())
                 {
-                    ::SetWindowTheme(WindowHandle, L"DarkMode_Explorer", nullptr);
+                    // While the theme is inverted the plain "Explorer" class
+                    // follows the (opposite) system appearance, so explicit
+                    // variants are required: DarkMode_Explorer for effective
+                    // dark and a reset for effective light.
+                    if (ShouldAppsUseDarkMode())
+                    {
+                        ::SetWindowTheme(WindowHandle, L"DarkMode_Explorer", nullptr);
+                    }
+                    else
+                    {
+                        ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                    }
                 }
                 else
                 {
-                    ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                    // Follow the system appearance (upstream behavior).
+                    ::SetWindowTheme(WindowHandle, L"Explorer", nullptr);
                 }
             }
             else if (
                 (0 == std::wcscmp(ClassName, WC_COMBOBOXW)) ||
                 (0 == std::wcscmp(ClassName, WC_EDITW)))
             {
-                // "CFD" alone is not a real theme class, so the previous
-                // unconditional SetWindowTheme(L"CFD") silently failed and
-                // combo boxes kept rendering with the light ComboBox class.
-                // The dark variants follow the same naming convention as
-                // DarkMode_Explorer. They must only be applied while the
-                // inverted theme is active, otherwise freshly created
-                // controls would stay dark after switching back to light.
-                if (ShouldAppsUseDarkMode())
+                if (::IsThemeInverted())
                 {
-                    ::SetWindowTheme(
-                        WindowHandle,
-                        (0 == std::wcscmp(ClassName, WC_COMBOBOXW))
-                            ? L"DarkMode_CFD"
-                            : L"DarkMode_Explorer",
-                        nullptr);
+                    // "CFD"/"Explorer" alone follow the system appearance.
+                    // Use their explicit dark variants while inverted dark
+                    // and reset the class while inverted light, otherwise
+                    // freshly created controls keep the system color.
+                    if (ShouldAppsUseDarkMode())
+                    {
+                        ::SetWindowTheme(
+                            WindowHandle,
+                            (0 == std::wcscmp(ClassName, WC_COMBOBOXW))
+                                ? L"DarkMode_CFD"
+                                : L"DarkMode_Explorer",
+                            nullptr);
+                    }
+                    else
+                    {
+                        ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                    }
                 }
                 else
                 {
-                    ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                    // Follow the system appearance (upstream behavior).
+                    ::SetWindowTheme(WindowHandle, L"CFD", nullptr);
                 }
                 ::MileAllowDarkModeForWindow(WindowHandle, TRUE);
             }
             else if (0 == std::wcscmp(ClassName, WC_HEADERW))
             {
-                ::SetWindowTheme(WindowHandle, L"ItemsView", nullptr);
-            }
-            else if (0 == std::wcscmp(ClassName, WC_TREEVIEWW))
-            {
-                // The namespace tree inside the common file dialogs (and any
-                // other tree view) keeps rendering with the light Explorer
-                // theme unless the dark variant is requested explicitly.
-                if (ShouldAppsUseDarkMode())
+                if (::IsThemeInverted() && !ShouldAppsUseDarkMode())
                 {
-                    ::SetWindowTheme(WindowHandle, L"DarkMode_Explorer", nullptr);
-                    TreeView_SetBkColor(WindowHandle, g_DarkModeBackgroundColor);
-                    TreeView_SetTextColor(WindowHandle, g_DarkModeForegroundColor);
+                    // Inverted light (dark system forced light): reset to the
+                    // default header class, otherwise the cached ItemsView
+                    // surface keeps rendering as the black "name" column bar
+                    // after a restart.
+                    ::SetWindowTheme(WindowHandle, nullptr, nullptr);
                 }
                 else
                 {
-                    ::SetWindowTheme(WindowHandle, nullptr, nullptr);
-                    TreeView_SetBkColor(WindowHandle, CLR_DEFAULT);
-                    TreeView_SetTextColor(WindowHandle, CLR_DEFAULT);
+                    // Native themes and inverted dark both use ItemsView.
+                    ::SetWindowTheme(WindowHandle, L"ItemsView", nullptr);
+                }
+            }
+            else if (0 == std::wcscmp(ClassName, WC_TREEVIEWW))
+            {
+                // The namespace tree only needs explicit handling while the
+                // theme is inverted (the system dialogs that own such trees
+                // render inside a native suspend scope and never get here).
+                if (::IsThemeInverted())
+                {
+                    if (ShouldAppsUseDarkMode())
+                    {
+                        ::SetWindowTheme(WindowHandle, L"DarkMode_Explorer", nullptr);
+                        TreeView_SetBkColor(WindowHandle, g_DarkModeBackgroundColor);
+                        TreeView_SetTextColor(WindowHandle, g_DarkModeForegroundColor);
+                    }
+                    else
+                    {
+                        ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                        TreeView_SetBkColor(WindowHandle, CLR_DEFAULT);
+                        TreeView_SetTextColor(WindowHandle, CLR_DEFAULT);
+                    }
                 }
             }
             else if (0 == std::wcscmp(ClassName, WC_LISTVIEWW))
             {
-                ::SetWindowTheme(WindowHandle, L"ItemsView", nullptr);
+                if (::IsThemeInverted() && !ShouldAppsUseDarkMode())
+                {
+                    ::SetWindowTheme(WindowHandle, nullptr, nullptr);
+                }
+                else
+                {
+                    ::SetWindowTheme(WindowHandle, L"ItemsView", nullptr);
+                }
 
                 if (ShouldAppsUseDarkMode())
                 {
@@ -612,12 +673,12 @@ namespace
 
         // Apply the class-specific theme settings (Explorer buttons, CFD
         // combo boxes and edit controls, ItemsView headers and list views,
-        // composited status bars) to every window as soon as it is created.
-        // The in-session theme switch covers existing windows through
-        // K7UserRefreshTheme, but freshly created controls (e.g. after a
-        // restart with the inverted theme already enabled, or dialogs opened
-        // later on) otherwise keep using their default theme classes and
-        // render with light theme data.
+        // composited status bars) to File Manager windows as soon as they
+        // are created. The in-session theme switch covers existing windows
+        // through K7UserRefreshTheme, but freshly created controls (e.g.
+        // after a restart with the inverted theme already enabled, or
+        // dialogs opened later on) otherwise keep using their default theme
+        // classes and render with the wrong theme data.
         if (EVENT_OBJECT_CREATE != WinEvent ||
             OBJID_WINDOW != ObjectId ||
             0 != ChildId ||
@@ -647,7 +708,13 @@ namespace
             0 == std::wcscmp(ClassName, WC_TABCONTROLW) ||
             0 == std::wcscmp(ClassName, TOOLBARCLASSNAMEW))
         {
-            ::RefreshWindowTheme(WindowHandle);
+            // Never redirect windows of a native system dialog (the common
+            // file dialog creates these control classes internally) or
+            // windows outside the File Manager ownership boundary.
+            if (::ShouldApplyManagedThemeToWindow(WindowHandle))
+            {
+                ::RefreshWindowTheme(WindowHandle);
+            }
         }
     }
 
@@ -756,62 +823,46 @@ namespace
             // Runs after every synchronous WM_CREATE handler of the window
             // (the framework's own initialization included), so the theme
             // decision applied here wins over any default backdrop the
-            // framework set during initialization.
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            K7ThemeDebugTrace(
-                L"DeferredThemeApply: hwnd=%08X dark=%d",
-                (DWORD)(DWORD_PTR)hWnd,
-                (int)ShouldAppsUseDarkMode());
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
-            ::K7ApplyWindowThemeForCreate(hWnd);
+            // framework set during initialization. Only File Manager owned
+            // windows receive this message, and a native dialog suspend
+            // scope must not be able to theme a foreign window.
+            if (::ShouldApplyManagedThemeToWindow(hWnd))
+            {
+                ::K7ApplyWindowThemeForCreate(hWnd);
+
+                // Re-evaluate the child controls (header, list view) after
+                // the framework finished initializing the top-level window,
+                // otherwise a header can keep a stale dark class on a
+                // dark-theme system with the inverted (light) theme.
+                ::EnumChildWindows(
+                    hWnd,
+                    [](
+                        _In_ HWND ChildWindow,
+                        _In_ LPARAM lParam) -> BOOL
+                {
+                    UNREFERENCED_PARAMETER(lParam);
+                    ::RefreshWindowTheme(ChildWindow);
+                    return TRUE;
+                },
+                    0);
+            }
             return 0;
         }
 
         switch (uMsg)
         {
-        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-        case WM_ACTIVATE:
-        {
-            K7ThemeDebugTrace(
-                L"WM_ACTIVATE: hwnd=%08X wp=%08X",
-                (DWORD)(DWORD_PTR)hWnd,
-                (DWORD)(DWORD_PTR)wParam);
-            break;
-        }
-        case WM_THEMECHANGED:
-        {
-            K7ThemeDebugTrace(
-                L"WM_THEMECHANGED(recv): hwnd=%08X",
-                (DWORD)(DWORD_PTR)hWnd);
-            break;
-        }
-        case WM_DESTROY:
-        {
-            K7ThemeDebugTrace(
-                L"WM_DESTROY: hwnd=%08X",
-                (DWORD)(DWORD_PTR)hWnd);
-            break;
-        }
-        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
         case WM_CTLCOLOREDIT:
         case WM_CTLCOLORLISTBOX:
         case WM_CTLCOLORDLG:
         case WM_CTLCOLORSTATIC:
         case WM_CTLCOLORBTN:
         {
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+            // Leave system dialogs and other non File Manager windows with
+            // their native control colors.
+            if (!::ShouldApplyManagedThemeToWindow(hWnd))
             {
-                wchar_t ParentClassName[256] = {};
-                ::GetClassNameW(hWnd, ParentClassName, 256);
-                K7ThemeDebugTrace(
-                    L"CTLCOLOR: msg=%08X parent=%08X (%s) child=%08X dark=%d",
-                    (unsigned)uMsg,
-                    (DWORD)(DWORD_PTR)hWnd,
-                    ParentClassName,
-                    (DWORD)(DWORD_PTR)lParam,
-                    (int)ShouldAppsUseDarkMode());
+                break;
             }
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             HDC DeviceContextHandle = reinterpret_cast<HDC>(wParam);
             if (DeviceContextHandle)
             {
@@ -847,13 +898,6 @@ namespace
         case WM_SETTINGCHANGE:
         {
             LPCTSTR Section = reinterpret_cast<LPCTSTR>(lParam);
-
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            K7ThemeDebugTrace(
-                L"WM_SETTINGCHANGE(recv): hwnd=%08X section=%ws",
-                (DWORD)(DWORD_PTR)hWnd,
-                Section ? Section : L"(null)");
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
 
             if (Section && 0 == std::wcscmp(Section, L"ImmersiveColorSet"))
             {
@@ -910,24 +954,45 @@ namespace
         case WM_INITDIALOG:
         case WM_CREATE:
         {
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            K7ThemeDebugTrace(
-                L"WM_INITDIALOG/WM_CREATE: hwnd=%08X msg=%u",
-                (DWORD)(DWORD_PTR)hWnd,
-                uMsg);
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+            // System dialogs and other non File Manager windows initialize
+            // with their native appearance, especially while a native
+            // dialog suspend scope is active.
+            if (!::ShouldApplyManagedThemeToWindow(hWnd))
+            {
+                break;
+            }
+
             ::K7ApplyWindowThemeForCreate(hWnd);
+
             // The framework applies its own default backdrop during window
-            // initialization, which can run after this WM_CREATE handler
-            // and overwrite the decision above (observed as an opaque black
-            // bar when the inverted theme had the application light on a
-            // dark-theme system). Post a deferred re-apply that runs once
-            // every synchronous initialization completed.
-            ::PostMessageW(
+            // initialization, which can run after this WM_CREATE handler and
+            // overwrite the decision above (observed as an opaque black bar
+            // when the inverted theme had the application light on a
+            // dark-theme system). Re-apply once after all synchronous
+            // initialization, but only for the File Manager top-level
+            // window and the XAML islands: they are the only surfaces whose
+            // framework-set backdrop has to be overridden. Posting this to
+            // every created control flooded the queue while a system dialog
+            // built its window tree and produced unordered refreshes.
+            wchar_t CreateClassName[256] = {};
+            bool DeferredTarget = false;
+            if (0 != ::GetClassNameW(
                 hWnd,
-                ::K7GetDeferredThemeApplyMessage(),
-                0,
-                0);
+                CreateClassName,
+                MO_ARRAY_SIZE(CreateClassName)))
+            {
+                DeferredTarget =
+                    ::IsFileManagerWindowClassName(CreateClassName) ||
+                    (nullptr != std::wcsstr(CreateClassName, L"Mile.Xaml."));
+            }
+            if (DeferredTarget)
+            {
+                ::PostMessageW(
+                    hWnd,
+                    ::K7GetDeferredThemeApplyMessage(),
+                    0,
+                    0);
+            }
 
             break;
         }
@@ -960,12 +1025,6 @@ namespace
                                 ? ::GetDarkModeBackgroundBrush()
                                 : reinterpret_cast<HBRUSH>(
                                     ::GetStockObject(WHITE_BRUSH)));
-                        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-                        K7ThemeDebugTrace(
-                            L"WM_ERASEBKGND island hwnd=%08X dark=%d",
-                            (DWORD)(DWORD_PTR)hWnd,
-                            (int)ShouldAppsUseDarkMode());
-                        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
                         return TRUE;
                     }
                 }
@@ -1588,11 +1647,6 @@ namespace
         {
         case COLOR_WINDOW:
         case COLOR_BTNFACE:
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            K7ThemeDebugTrace(
-                L"GetSysColor(%d) -> dark",
-                nIndex);
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             return g_DarkModeBackgroundColor;
         case COLOR_WINDOWTEXT:
         case COLOR_BTNTEXT:
@@ -1631,15 +1685,17 @@ namespace
         return Original(hTheme, iColorId);
     }
 
-    // The DirectUI content inside common file dialogs draws its list
-    // background with GetThemeSysColor instead of GetSysColor, which left
-    // the file list white in dark mode. Route the same system colors to the
-    // dark palette here.
+    // The DirectUI content draws list backgrounds with GetThemeSysColor.
+    // This detour is inversion-only: when following a dark system the native
+    // theme data already provides the correct dark colors (upstream does not
+    // detour GetThemeSysColor at all), so we pass straight through there.
     static COLORREF WINAPI DetouredGetThemeSysColor(
         _In_ HTHEME hTheme,
         _In_ int iColorId)
     {
-        if (!g_GlobalInitialized || !ShouldAppsUseDarkMode())
+        if (!g_GlobalInitialized ||
+            !ShouldAppsUseDarkMode() ||
+            !::IsThemeInverted())
         {
             return ::OriginalGetThemeSysColor(hTheme, iColorId);
         }
@@ -1648,11 +1704,6 @@ namespace
         {
         case COLOR_WINDOW:
         case COLOR_BTNFACE:
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            K7ThemeDebugTrace(
-                L"GetThemeSysColor(%d) -> dark",
-                iColorId);
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             return g_DarkModeBackgroundColor;
         case COLOR_WINDOWTEXT:
         case COLOR_BTNTEXT:
@@ -1706,60 +1757,52 @@ namespace
         if (TMT_TEXTCOLOR == iPropId)
         {
             wchar_t ClassName[256] = {};
-            if (FAILED(::OriginalGetThemeClass(
-                hTheme,
-                ClassName,
-                MO_ARRAY_SIZE(ClassName))))
-            {
-                *pColor = g_DarkModeForegroundColor;
-            }
-            else if (0 == std::wcsncmp(ClassName, L"DarkMode_", 9))
-            {
-                // Native dark theme data opened through the DarkMode_
-                // class redirect: keep the native color untouched.
-            }
-            else if (IsDarkTextThemeClass(ClassName))
-            {
-                // Light theme data of a class whose background we draw dark
-                // (or darken via TMT_FILLCOLOR): force white so the text
-                // stays readable. Native dark data and menus are excluded
-                // above, and compound classes not in the whitelist keep
-                // their light backgrounds with readable dark text.
-                *pColor = g_DarkModeForegroundColor;
-            }
-        }
-        else if (TMT_FILLCOLOR == iPropId)
-        {
-            wchar_t FillClassName[256] = {};
-            bool FillExempt = false;
             if (SUCCEEDED(::OriginalGetThemeClass(
                 hTheme,
-                FillClassName,
-                MO_ARRAY_SIZE(FillClassName))))
+                ClassName,
+                MO_ARRAY_SIZE(ClassName))) &&
+                0 == ::_wcsicmp(ClassName, VSCLASS_TASKDIALOGSTYLE))
             {
-                // Native dark theme data keeps its own (already dark) fill
-                // colors. Menus are not exempted here anymore: the common
-                // file dialogs are shown with the suspended (native) theme
-                // via K7UserSuspendDarkMode now, so their DirectUI surfaces
-                // never reach this detour, while the File Manager popup
-                // menus need the dark fill.
-                FillExempt =
-                    (0 == std::wcsncmp(FillClassName, L"DarkMode_", 9));
+                // Upstream behavior: task dialog text is always forced to the
+                // light foreground on an effective dark theme.
+                *pColor = g_DarkModeForegroundColor;
             }
-
-            // DirectUI surfaces inside the common file dialogs (file list,
-            // namespace tree) resolve their background via GetThemeColor
-            // TMT_FILLCOLOR with various class names and never call
-            // DrawThemeBackground for it (verified with the debug trace).
-            // Provide the dark background fill color for all of them.
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            K7ThemeDebugTrace(
-                L"GetThemeColor FILLCOLOR class=%ws part=%d state=%d exempt=%d",
-                FillClassName,
-                iPartId,
-                iStateId,
-                (int)FillExempt);
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+            else if (::IsThemeInverted())
+            {
+                // Inversion-only: a light system forced dark hands out light
+                // theme data with dark text colors, so force white for the
+                // classes whose backgrounds we draw dark.
+                if (FAILED(::OriginalGetThemeClass(
+                    hTheme,
+                    ClassName,
+                    MO_ARRAY_SIZE(ClassName))))
+                {
+                    *pColor = g_DarkModeForegroundColor;
+                }
+                else if (0 != std::wcsncmp(ClassName, L"DarkMode_", 9) &&
+                    IsDarkTextThemeClass(ClassName))
+                {
+                    // Native dark data keeps its own color; compound classes
+                    // with light backgrounds and non-whitelisted classes keep
+                    // their readable dark text (see IsDarkTextThemeClass).
+                    *pColor = g_DarkModeForegroundColor;
+                }
+            }
+        }
+        else if (TMT_FILLCOLOR == iPropId && ::IsThemeInverted())
+        {
+            // Inversion-only. DirectUI surfaces resolve their background via
+            // GetThemeColor TMT_FILLCOLOR and never call DrawThemeBackground
+            // for it, so provide the dark fill. Native dark theme data opened
+            // through the DarkMode_ redirect keeps its own (already dark)
+            // color. The suspended native file dialogs never reach here.
+            wchar_t FillClassName[256] = {};
+            bool FillExempt =
+                (SUCCEEDED(::OriginalGetThemeClass(
+                    hTheme,
+                    FillClassName,
+                    MO_ARRAY_SIZE(FillClassName))) &&
+                    (0 == std::wcsncmp(FillClassName, L"DarkMode_", 9)));
             if (!FillExempt)
             {
                 *pColor = g_DarkModeBackgroundColor;
@@ -1886,28 +1929,28 @@ namespace
                 pRect);
         }
 
-        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
+        if (!::IsThemeInverted())
         {
-            wchar_t TraceClassName[256] = {};
-            if (SUCCEEDED(::OriginalGetThemeClass(
+            // Upstream behavior when following a dark system: every themed
+            // text run is forced to the light foreground. Use the unhooked
+            // DrawThemeTextEx pointer to avoid re-entering our own detour.
+            DTTOPTS TextOptions = {};
+            TextOptions.dwSize = sizeof(DTTOPTS);
+            TextOptions.dwFlags = DTT_TEXTCOLOR;
+            TextOptions.crText = g_DarkModeForegroundColor;
+
+            RECT Rect = *pRect;
+            return ::OriginalDrawThemeTextEx(
                 hTheme,
-                TraceClassName,
-                MO_ARRAY_SIZE(TraceClassName))))
-            {
-                wchar_t TextPreview[17] = {};
-                for (int Ti = 0; (Ti < 16) && (Ti < cchText); ++Ti)
-                {
-                    TextPreview[Ti] = pszText[Ti];
-                }
-                K7ThemeDebugTrace(
-                    L"DrawThemeText class=%ws part=%d state=%d text=%ws",
-                    TraceClassName,
-                    iPartId,
-                    iStateId,
-                    TextPreview);
-            }
+                hdc,
+                iPartId,
+                iStateId,
+                pszText,
+                cchText,
+                dwTextFlags,
+                &Rect,
+                &TextOptions);
         }
-        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
 
         if (IsToolbarThemeText(hTheme))
         {
@@ -1963,7 +2006,12 @@ namespace
         _In_ LPRECT lprc,
         _In_opt_ const DTTOPTS* pOptions)
     {
-        if (!g_GlobalInitialized || !ShouldAppsUseDarkMode())
+        // Upstream does not detour DrawThemeTextEx: when following a dark
+        // system the native implementation is used unchanged. Only inverted
+        // dark needs the text color adjustment.
+        if (!g_GlobalInitialized ||
+            !ShouldAppsUseDarkMode() ||
+            !::IsThemeInverted())
         {
             return ::OriginalDrawThemeTextEx(
                 hTheme,
@@ -2072,45 +2120,28 @@ namespace
                 pClipRect);
         }
 
-        // Resolve the class name once for both the debug trace and the
-        // compound-class matches below.
+        // Resolve the class name once for the compound-class matches below.
         wchar_t BgClassName[256] = {};
-        if (SUCCEEDED(::OriginalGetThemeClass(
+        if (FAILED(::OriginalGetThemeClass(
             hTheme,
             BgClassName,
             MO_ARRAY_SIZE(BgClassName))))
         {
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            {
-                wchar_t TargetWindowClassName[64] = {};
-                HWND TargetWindow = ::WindowFromDC(hdc);
-                if (nullptr == TargetWindow ||
-                    0 == ::GetClassNameW(
-                        TargetWindow,
-                        TargetWindowClassName,
-                        MO_ARRAY_SIZE(TargetWindowClassName)))
-                {
-                    ::lstrcpynW(
-                        TargetWindowClassName,
-                        L"<unknown>",
-                        MO_ARRAY_SIZE(TargetWindowClassName));
-                }
-                K7ThemeDebugTrace(
-                    L"DrawThemeBackground class=%ws part=%d state=%d hwnd=%p win=%ws",
-                    BgClassName,
-                    iPartId,
-                    iStateId,
-                    TargetWindow,
-                    TargetWindowClassName);
-            }
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
+            BgClassName[0] = L'\0';
         }
 
         // The class names are resolved through GetThemeClass instead of
         // comparing cached theme handles, because the handles are per-window
         // and can be reopened (and thus invalidated) at any time, while the
         // class name of an opened theme data is stable.
-        if (::IsThemeClass(hTheme, L"Menu"))
+        //
+        // Popup menus are hand-drawn ONLY for inverted dark. When the
+        // application simply follows a dark system, the system draws the
+        // native dark menu itself, including the radio bullet and check
+        // glyphs; intercepting those parts hides the glyphs ("View" menu).
+        // In inverted dark (a light system forced dark) uxtheme hands out
+        // light menu data, so every menu part has to be painted explicitly.
+        if (::IsThemeInverted() && ::IsThemeClass(hTheme, L"Menu"))
         {
             // Popup menus use the Menu theme class. uxtheme hands out the
             // system (light) theme data for menus even when the process is
@@ -2352,10 +2383,11 @@ namespace
             }
         }
         else if (
-            IsThemeClass(hTheme, L"ItemsView") ||
+            ::IsThemeInverted() &&
+            (IsThemeClass(hTheme, L"ItemsView") ||
             IsThemeClass(hTheme, L"Header") ||
             0 == ::_wcsicmp(BgClassName, L"ItemsView::Header") ||
-            0 == ::_wcsicmp(BgClassName, L"ItemsView::ListView"))
+            0 == ::_wcsicmp(BgClassName, L"ItemsView::ListView")))
         {
             // Header items and list view item backgrounds. Part 1 covers
             // HP_HEADERITEM as well as LVP_LISTITEM; parts 2-4 cover the
@@ -2364,12 +2396,6 @@ namespace
             // SetWindowTheme during an in-session theme switch, while
             // freshly created controls (e.g. after a restart with inverted
             // theme already enabled) still use the default Header class.
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            K7ThemeDebugTrace(
-                L"DrawThemeBackground ItemsView/Header part=%d state=%d",
-                iPartId,
-                iStateId);
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
             switch (iPartId)
             {
             case 1:
@@ -2395,16 +2421,19 @@ namespace
             }
         }
         else if (
-            ::IsThemeClass(hTheme, L"Explorer") ||
-            ::IsThemeClass(hTheme, L"Button"))
+            ::IsThemeInverted() &&
+            (::IsThemeClass(hTheme, L"Explorer") ||
+            ::IsThemeClass(hTheme, L"Button")))
         {
-            // Buttons use the Explorer class via SetWindowTheme. Its part
-            // ids collide with the tree view glyph parts, but the File
-            // Manager windows don't contain tree views, so drawing the
-            // button parts dark is safe here. The Button class also matches
-            // for the same reason as Header above: buttons created after
-            // startup (e.g. reopening the options dialog in a session that
-            // started with inverted theme) still use the default class.
+            // Inversion-only hand drawing of buttons, check boxes and radio
+            // buttons (the native dark system renders these itself). Buttons
+            // use the Explorer class via SetWindowTheme; its part ids collide
+            // with the tree view glyph parts, but the File Manager windows
+            // don't contain tree views, so drawing the button parts dark is
+            // safe here. The Button class also matches because buttons created
+            // after startup (e.g. reopening the options dialog in a session
+            // that started with the inverted theme) still use the default
+            // class.
             switch (iPartId)
             {
             case BP_PUSHBUTTON:
@@ -2469,7 +2498,7 @@ namespace
                 break;
             }
         }
-        else if (::IsThemeClass(hTheme, L"Tooltip"))
+        else if (::IsThemeInverted() && ::IsThemeClass(hTheme, L"Tooltip"))
         {
             switch (iPartId)
             {
@@ -2484,7 +2513,7 @@ namespace
                 break;
             }
         }
-        else if (::IsThemeClass(hTheme, L"Toolbar"))
+        else if (::IsThemeInverted() && ::IsThemeClass(hTheme, L"Toolbar"))
         {
             // The command toolbars (the "Organize / New folder" row inside
             // the common file dialogs and the File Manager main toolbar)
@@ -2494,7 +2523,7 @@ namespace
             ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
             return S_OK;
         }
-        else if (::IsThemeClass(hTheme, L"Edit"))
+        else if (::IsThemeInverted() && ::IsThemeClass(hTheme, L"Edit"))
         {
             // Edit borders (1 = EP_EDITTEXT, 2-5 = the no-scroll / h-scroll
             // / v-scroll / hv-scroll border variants used e.g. by the search
@@ -2508,7 +2537,7 @@ namespace
                     : ::GetDarkModeBorderBrush());
             return S_OK;
         }
-        else if (::IsThemeClass(hTheme, L"SearchBox"))
+        else if (::IsThemeInverted() && ::IsThemeClass(hTheme, L"SearchBox"))
         {
             ::FillRect(hdc, pRect, ::GetDarkModeBackgroundBrush());
             ::FrameRect(hdc, pRect, ::GetDarkModeBorderBrush());
@@ -2589,10 +2618,12 @@ namespace
             }
         }
 
-        // In dark mode route the rest through DetouredDrawThemeBackground so
-        // the Button/Header/Explorer/ItemsView fallbacks also cover callers
-        // of DrawThemeBackgroundEx (e.g. freshly created controls after a
-        // restart with inverted theme already enabled).
+        // While the theme is inverted route the rest through
+        // DetouredDrawThemeBackground so the Button/Header/Explorer/ItemsView
+        // hand-drawn fallbacks also cover callers of DrawThemeBackgroundEx
+        // (e.g. freshly created controls after a restart with the inverted
+        // theme already enabled). When following the system, keep the native
+        // implementation (upstream behavior).
         if (pOptions && (pOptions->dwFlags & DTBG_CLIPRECT))
         {
             return ::OriginalDrawThemeBackgroundEx(
@@ -2604,24 +2635,38 @@ namespace
                 pOptions);
         }
 
-        return ::DetouredDrawThemeBackground(
+        if (::IsThemeInverted())
+        {
+            return ::DetouredDrawThemeBackground(
+                hTheme,
+                hdc,
+                iPartId,
+                iStateId,
+                pRect,
+                nullptr);
+        }
+
+        return ::OriginalDrawThemeBackgroundEx(
             hTheme,
             hdc,
             iPartId,
             iStateId,
             pRect,
-            nullptr);
+            pOptions);
     }
 
-    // Redirect selected theme classes to their built-in dark variants.
-    // Since Windows 10 1803 the system theme file contains dark classes,
-    // but unlike the compound forms used by the shell itself they only exist
-    // for a few class names. Mapping is restricted to a whitelist of classes
-    // verified to open successfully on Windows 10 (log: HIT entries), and
-    // compound class lists ("A::B") are never touched, so system dialogs
-    // (comdlg32 / IFileDialog internals) keep their own theme data.
-    // Everything else (Button, Toolbar, ItemsView, ...) falls through to
-    // the hand-drawn overrides in DetouredDrawThemeBackground.
+    // Redirect selected theme classes to their built-in explicit dark
+    // variants. This is inversion-only: when the application follows a dark
+    // system the native theme data already renders dark (upstream does not
+    // redirect OpenThemeData at all, and only maps the scrollbar through
+    // Explorer::ScrollBar), so nullptr is returned there and the caller falls
+    // back to its native open path.
+    //
+    // Mapping is restricted to a whitelist of classes known to open
+    // successfully on Windows 10, and compound class lists ("A::B") are never
+    // touched, so system dialogs keep their own theme data. Everything else
+    // (Button, Toolbar, ItemsView, ...) falls through to the hand-drawn
+    // overrides in DetouredDrawThemeBackground.
     // Returns nullptr when no redirect applies.
     static HTHEME TryOpenDarkModeThemeData(
         _In_opt_ HWND hwnd,
@@ -2629,6 +2674,7 @@ namespace
     {
         if (!g_GlobalInitialized ||
             !ShouldAppsUseDarkMode() ||
+            !::IsThemeInverted() ||
             !pszClassList ||
             L'\0' == pszClassList[0] ||
             nullptr != std::wcschr(pszClassList, L';'))
@@ -2676,15 +2722,7 @@ namespace
 
         if (DarkClassList)
         {
-            HTHEME DarkTheme = ::OriginalOpenThemeData(hwnd, DarkClassList);
-            // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-            K7ThemeDebugTrace(
-                L"OpenThemeData class=%ws -> %ws %s",
-                pszClassList,
-                DarkClassList,
-                (DarkTheme ? L"HIT" : L"MISS"));
-            // *** END TEMPORARY DEBUG INSTRUMENTATION ***
-            return DarkTheme;
+            return ::OriginalOpenThemeData(hwnd, DarkClassList);
         }
         return nullptr;
     }
@@ -2855,15 +2893,14 @@ namespace
 }
 
 // The system common file dialogs (IFileOpenDialog) render their content
-// through DirectUI which binds the uxtheme draw functions via delay-load.
-// Those bound pointers bypass our detours, so the inverted theme can never
-// style those dialogs consistently (dark backgrounds cannot reach the
-// header/tree areas, producing unreadable patches). The clean solution is
-// to show those dialogs with their native system appearance: suspend the
-// inverted theme while such a dialog is visible and resume afterwards.
-static volatile LONG g_SuspendCounter = 0;
-static bool g_SuspendSavedShouldUseDarkMode = false;
-
+// through DirectUI which caches the process appearance as soon as the
+// dialog object is created. The inverted theme can therefore never style
+// those dialogs consistently. The clean solution is to show them with
+// their native system appearance: the caller enters this suspend scope
+// BEFORE creating the IFileOpenDialog and leaves it after the dialog object
+// is released. While suspended the process follows the system appearance
+// (g_NativeThemeSuspendCounter) and every inversion-only window hook is
+// bypassed, so the whole dialog renders natively.
 EXTERN_C MO_RESULT MOAPI K7UserSuspendDarkMode()
 {
     if (!g_GlobalInitialized)
@@ -2871,27 +2908,24 @@ EXTERN_C MO_RESULT MOAPI K7UserSuspendDarkMode()
         return MO_RESULT_SUCCESS_OK;
     }
 
-    if (1 == ::InterlockedIncrement(&g_SuspendCounter))
+    if (1 == ::InterlockedIncrement(&g_NativeThemeSuspendCounter))
     {
-        g_SuspendSavedShouldUseDarkMode = ShouldAppsUseDarkMode();
-        // Follow the system appearance instead of forcing light: the common
-        // file dialogs render natively, i.e. dark on a dark-theme system and
-        // light on a light-theme system. Forcing false here splits the
-        // dialog in two on dark-theme systems, because the DirectUI content
-        // follows the system while the classic controls (file name edit,
-        // combo boxes, buttons) follow the forced flag and render light
-        // over the dark dialog.
+        // Clear the inversion state so the inversion-only detours (e.g. the
+        // hand-drawn popup menus) pass straight through while the native
+        // dialog is shown. It is restored by K7UserRefreshTheme ->
+        // ComputeShouldAppsUseDarkMode on resume, which re-reads the setting.
+        ::SetThemeInverted(false);
+
+        // Follow the system appearance: the common file dialog renders
+        // natively, i.e. dark on a dark system and light on a light system.
+        // Forcing one specific mode would split the dialog, because the
+        // DirectUI content and the classic controls would resolve different
+        // states.
         const bool SystemDarkMode = ::MileShouldAppsUseDarkMode() &&
             !::MileShouldAppsUseHighContrastMode();
         SetShouldAppsUseDarkMode(SystemDarkMode);
         ::K7SetPreferredAppMode(K7PreferredAppMode::Default);
         ::MileRefreshImmersiveColorPolicyState();
-        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-        K7ThemeDebugTrace(
-            L"K7UserSuspendDarkMode: suspended (saved dark=%d system dark=%d)",
-            (int)g_SuspendSavedShouldUseDarkMode,
-            (int)SystemDarkMode);
-        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     }
     return MO_RESULT_SUCCESS_OK;
 }
@@ -2903,41 +2937,26 @@ EXTERN_C MO_RESULT MOAPI K7UserResumeDarkMode()
         return MO_RESULT_SUCCESS_OK;
     }
 
-    LONG Counter = ::InterlockedDecrement(&g_SuspendCounter);
+    LONG Counter = ::InterlockedDecrement(&g_NativeThemeSuspendCounter);
     if (Counter < 0)
     {
         // Unbalanced resume call; clamp back to the neutral state.
-        ::InterlockedExchange(&g_SuspendCounter, 0);
+        ::InterlockedExchange(&g_NativeThemeSuspendCounter, 0);
         return MO_RESULT_SUCCESS_OK;
     }
     if (0 == Counter)
     {
-        SetShouldAppsUseDarkMode(g_SuspendSavedShouldUseDarkMode);
-        ::K7SetPreferredAppMode(
-            g_SuspendSavedShouldUseDarkMode
-                ? K7PreferredAppMode::ForceDark
-                : K7PreferredAppMode::ForceLight);
-        ::MileRefreshImmersiveColorPolicyState();
-        // Repaint the windows in case anything drew while suspended.
+        // Recompute the (possibly inverted) application policy and repaint
+        // the File Manager windows in case anything drew while suspended.
         ::K7UserRefreshTheme();
-        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-        K7ThemeDebugTrace(L"K7UserResumeDarkMode: resumed (dark=%d)",
-            (int)g_SuspendSavedShouldUseDarkMode);
-        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     }
     return MO_RESULT_SUCCESS_OK;
 }
 
 EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme()
 {
-    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-    K7ThemeDebugTrace(L"K7UserRefreshTheme: enter");
-    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     if (!g_GlobalInitialized)
     {
-        // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-        K7ThemeDebugTrace(L"K7UserRefreshTheme: not initialized, skip");
-        // *** END TEMPORARY DEBUG INSTRUMENTATION ***
         return MO_RESULT_SUCCESS_OK;
     }
 
@@ -3003,11 +3022,6 @@ EXTERN_C MO_RESULT MOAPI K7UserRefreshTheme()
     },
         0);
 
-    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-    K7ThemeDebugTrace(
-        L"K7UserRefreshTheme: exit dark=%d",
-        (int)ShouldAppsUseDarkMode());
-    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
     return MO_RESULT_SUCCESS_OK;
 }
 
@@ -3024,10 +3038,6 @@ EXTERN_C MO_RESULT MOAPI K7UserInitializeDarkModeSupport()
         // return success without doing anything on older versions of Windows.
         return MO_RESULT_SUCCESS_OK;
     }
-
-    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-    K7ThemeDebugTrace(L"K7UserInitializeDarkModeSupport: begin");
-    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
 
     if (!::InitializeFunctionTable())
     {
@@ -3063,20 +3073,14 @@ EXTERN_C MO_RESULT MOAPI K7UserInitializeDarkModeSupport()
     // class-specific dark mode settings applied immediately, independent of
     // when it is created (startup, dialogs opened later, restarts with the
     // inverted theme already enabled, ...).
-    // *** TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE RELEASE ***
-    K7ThemeDebugTrace(L"K7UserInitializeDarkModeSupport: installing WinEvent hook");
-    // *** END TEMPORARY DEBUG INSTRUMENTATION ***
-    if (!::SetWinEventHook(
+    ::SetWinEventHook(
         EVENT_OBJECT_CREATE,
         EVENT_OBJECT_CREATE,
         nullptr,
         ::K7UserWinEventProc,
         0,
         0,
-        WINEVENT_OUTOFCONTEXT))
-    {
-        K7ThemeDebugTrace(L"K7UserInitializeDarkModeSupport: SetWinEventHook failed");
-    }
+        WINEVENT_OUTOFCONTEXT);
 
     return MO_RESULT_SUCCESS_OK;
 }
