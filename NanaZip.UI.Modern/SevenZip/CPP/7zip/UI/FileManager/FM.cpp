@@ -12,6 +12,7 @@
 #endif
 
 #include "../../../Common/StringConvert.h"
+#include "../../../Common/IntToString.h"
 #include "../../../Common/StringToInt.h"
 
 #include "../../../Windows/ErrorMsg.h"
@@ -739,10 +740,19 @@ void NanaZipInitialize()
         ::ErrorMessage(L"K7BaseDisableDynamicCodeGeneration Failed");
     }
 
-    if (S_OK != ::K7ModernInitialize())
     {
-        ::ErrorMessage(L"K7ModernInitialize Failed");
-        ::ExitProcess(1);
+        HRESULT ModernInitializeResult = ::K7ModernInitialize();
+        if (S_OK != ModernInitializeResult)
+        {
+            char HexBuffer[16];
+            ConvertUInt32ToHex8Digits(
+                static_cast<UInt32>(ModernInitializeResult), HexBuffer);
+            AString ErrorText("K7ModernInitialize Failed (0x");
+            ErrorText += HexBuffer;
+            ErrorText += ')';
+            ::ErrorMessage(ErrorText);
+            ::ExitProcess(1);
+        }
     }
 }
 // **************** NanaZip Modification End ****************
@@ -1133,7 +1143,19 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
     case WM_SETTINGCHANGE:
     {
-        ::SendMessageW(g_App.m_ToolBar, message, wParam, lParam);
+      ::SendMessageW(g_App.m_ToolBar, message, wParam, lParam);
+
+        // **************** NanaZip Modification Start ****************
+        // Refresh the XAML theme when the system light/dark mode changes so
+        // the "Invert Theme" option keeps tracking the system setting.
+        {
+          LPCWSTR Section = reinterpret_cast<LPCWSTR>(lParam);
+          if (Section && 0 == lstrcmpiW(Section, L"ImmersiveColorSet"))
+          {
+            ::K7ModernRefreshTheme();
+          }
+        }
+        // **************** NanaZip Modification End ****************
 
         break;
     }
