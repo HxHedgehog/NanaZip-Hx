@@ -34,6 +34,8 @@
 #include <iterator>
 #include <mutex>
 #include <map>
+#include <utility>
+#include <vector>
 
 namespace winrt
 {
@@ -252,32 +254,49 @@ namespace
                             return false;
                         };
                         // The content root type varies per island. Try the
-                        // root first and walk the first layers of the visual
-                        // tree otherwise.
+                        // root first and walk the first two layers of the
+                        // visual tree otherwise.
                         if (!TryPaintBackground(RootElement))
                         {
                             bool Painted = false;
                             try
                             {
-                                for (int Layer = 0; Layer < 2 && !Painted;
+                                std::vector<
+                                    winrt::Windows::UI::Xaml::DependencyObject>
+                                    NodesToVisit{ RootElement };
+                                for (int Layer = 0;
+                                    Layer < 2 && !Painted && !NodesToVisit.empty();
                                     ++Layer)
                                 {
-                                    int Count = winrt::Windows::UI::Xaml::Media::VisualTreeHelper::GetChildrenCount(
-                                        RootElement);
-                                    for (int Index = 0; Index < Count; ++Index)
+                                    std::vector<
+                                        winrt::Windows::UI::Xaml::DependencyObject>
+                                        NextLayer;
+                                    for (const auto& Node : NodesToVisit)
                                     {
-                                        auto Child = winrt::Windows::UI::Xaml::Media::VisualTreeHelper::GetChild(
-                                            RootElement,
-                                            Index);
-                                        auto ChildElement = Child.try_as<
-                                            winrt::Windows::UI::Xaml::FrameworkElement>();
-                                        if (ChildElement &&
-                                            TryPaintBackground(ChildElement))
+                                        const int Count =
+                                            winrt::Windows::UI::Xaml::Media::VisualTreeHelper::GetChildrenCount(
+                                                Node);
+                                        for (int Index = 0;
+                                            Index < Count && !Painted;
+                                            ++Index)
                                         {
-                                            Painted = true;
-                                            break;
+                                            auto Child =
+                                                winrt::Windows::UI::Xaml::Media::VisualTreeHelper::GetChild(
+                                                    Node,
+                                                    Index);
+                                            if (auto ChildElement = Child.try_as<
+                                                winrt::Windows::UI::Xaml::FrameworkElement>())
+                                            {
+                                                Painted = TryPaintBackground(
+                                                    ChildElement);
+                                            }
+                                            if (!Painted)
+                                            {
+                                                NextLayer.push_back(Child);
+                                            }
                                         }
                                     }
+                                    NodesToVisit = std::move(NextLayer);
                                 }
                             }
                             catch (...)
@@ -302,7 +321,6 @@ namespace
         }
         const winrt::Windows::UI::Xaml::ApplicationTheme Theme =
             ::K7ModernComputeTheme();
-        // *** NanaZip Modification Start ****************
         // Application.RequestedTheme throws once XAML content exists (and
         // before the XAML framework is initialized in this process), which
         // aborted this whole function and silently skipped the per-island
@@ -318,7 +336,6 @@ namespace
         {
             // RequestedTheme is best-effort; ignore if it is unavailable.
         }
-        // *** NanaZip Modification End ******************
 
         // XAML Islands do not refresh already loaded DesktopWindowXamlSource
         // contents when Application.RequestedTheme changes at runtime, so
@@ -415,8 +432,7 @@ EXTERN_C HRESULT WINAPI K7ModernInitialize()
     }
     // Refresh the XAML theme with best effort. It must not fail the
     // initialization because the XAML island may not be ready for
-    // Application::RequestedTheme at this point. Any failure is recorded
-    // to HKCU\Software\NanaZip\FM\ModernThemeError for diagnosis.
+    // Application::RequestedTheme at this point.
     ::K7ModernRefreshTheme();
     return S_OK;
 }
@@ -440,45 +456,16 @@ EXTERN_C HRESULT WINAPI K7ModernUninitialize()
     return S_OK;
 }
 
-namespace
-{
-    static void K7ModernLogThemeError(_In_ HRESULT ErrorCode)
-    {
-        HKEY KeyHandle = nullptr;
-        if (ERROR_SUCCESS != ::RegCreateKeyExW(
-            HKEY_CURRENT_USER,
-            L"Software\\NanaZip\\FM",
-            0,
-            nullptr,
-            REG_OPTION_NON_VOLATILE,
-            KEY_SET_VALUE,
-            nullptr,
-            &KeyHandle,
-            nullptr))
-        {
-            return;
-        }
-        DWORD Value = static_cast<DWORD>(ErrorCode);
-        ::RegSetValueExW(
-            KeyHandle,
-            L"ModernThemeError",
-            0,
-            REG_DWORD,
-            reinterpret_cast<const BYTE*>(&Value),
-            sizeof(Value));
-        ::RegCloseKey(KeyHandle);
-    }
-}
-
 EXTERN_C VOID WINAPI K7ModernRefreshTheme()
 {
+    // Best effort: the XAML framework or an island may not be ready when
+    // this is called during initialization or teardown.
     try
     {
         ::K7ModernApplyTheme();
     }
     catch (...)
     {
-        ::K7ModernLogThemeError(winrt::to_hresult());
     }
 }
 

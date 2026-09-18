@@ -467,7 +467,7 @@ bool CPanel::OnCreate(CREATESTRUCT * /* createStruct */)
               ::K7ModernRefreshTheme();
           });
       }
-      // **************** NanaZip Modification End ******************
+      // **************** NanaZip Modification End ****************
 
       XamlSource.TakeFocusRequested(
           [this](
@@ -594,7 +594,7 @@ bool CPanel::OnCreate(CREATESTRUCT * /* createStruct */)
               ::K7ModernRefreshTheme();
           });
       }
-      // **************** NanaZip Modification End ******************
+      // **************** NanaZip Modification End ****************
 
       XamlSource.TakeFocusRequested(
           [this](
@@ -1161,7 +1161,7 @@ void CPanel::AddToExistingArchive()
     const UString &ArchivePath = Link.VirtualPath;
 
     // MyBrowseForFile doesn't have multiselect, so use IFileOpenDialog directly
-    //
+    // **************** NanaZip Modification Start ****************
     // Suspend the inverted theme for the ENTIRE native dialog lifetime,
     // starting BEFORE the IFileOpenDialog object is created: its DirectUI
     // internals cache the process appearance during creation, so suspending
@@ -1173,6 +1173,7 @@ void CPanel::AddToExistingArchive()
         ~NK7NativeThemeDialogScope() { ::K7UserResumeDarkMode(); }
     };
     NK7NativeThemeDialogScope NativeThemeDialogScope;
+    // **************** NanaZip Modification End ****************
 
     CMyComPtr<IFileOpenDialog> FileDialog;
     if (FAILED(::CoCreateInstance(
@@ -1205,6 +1206,7 @@ void CPanel::AddToExistingArchive()
         }
     }
 
+    // **************** NanaZip Modification Start ****************
     // The native theme suspend scope (NativeThemeDialogScope) keeps the
     // whole dialog on the unmodified system appearance for its lifetime.
     const HRESULT ShowResult = FileDialog->Show(GetParent());
@@ -1215,6 +1217,7 @@ void CPanel::AddToExistingArchive()
     {
         return;
     }
+    // **************** NanaZip Modification End ****************
 
     UStringVector SelectedPaths;
     DWORD Count;

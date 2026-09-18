@@ -230,7 +230,7 @@ HRESULT CApp::Create(HWND hwnd, const UString &mainPath, const UString &arcForma
               ::K7ModernRefreshTheme();
           });
       }
-      // **************** NanaZip Modification End ******************
+      // **************** NanaZip Modification End ****************
 
       XamlSource.TakeFocusRequested(
           [this](

@@ -18,7 +18,7 @@
 // **************** NanaZip Modification Start ****************
 #include <shobjidl.h>
 #include <K7User.h>
-// **************** NanaZip Modification End ******************
+// **************** NanaZip Modification End ****************
 
 #ifndef _UNICODE
 extern bool g_IsNT;
@@ -167,12 +167,12 @@ static SHCreateItemFromParsingNameFn GetSHCreateItemFromParsingName()
 }
 
 }
-// **************** NanaZip Modification End ******************
 
 #define my_CLSID_FileOpenDialog NWindows::NFileOpenDialogInternal::k_CLSID_FileOpenDialog
 #define my_IID_IFileOpenDialog NWindows::NFileOpenDialogInternal::k_IID_IFileOpenDialog
 #define my_IID_IShellItem NWindows::NFileOpenDialogInternal::k_IID_IShellItem
 #define k_SHCreateItemFromParsingName NWindows::NFileOpenDialogInternal::GetSHCreateItemFromParsingName()
+// **************** NanaZip Modification End ****************
 
 bool MyGetOpenFileName(HWND hwnd, LPCWSTR title,
     LPCWSTR initialDir,
@@ -357,14 +357,18 @@ bool MyGetOpenFileName(HWND hwnd, LPCWSTR title,
       p.nMaxFile = kBufSize;
       p.lpstrInitialDir = initialDir;
       p.lpstrTitle = title;
-      p.Flags = OFN_EXPLORER | OFN_HIDEREADONLY;
+      p.Flags = OFN_EXPLORER | OFN_HIDEREADONLY
+          #ifdef UNDER_CE
+          | (openFolder ? (MY__OFN_PROJECT | MY__OFN_SHOW_ALL) : 0)
+          #endif
+          ;
 
       res = BOOLToBool(::GetOpenFileNameW(&p));
       resPath = buf;
     }
 
     return res;
-    // **************** NanaZip Modification End ******************
+    // **************** NanaZip Modification End ****************
   }
 }
 
