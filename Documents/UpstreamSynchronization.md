@@ -21,11 +21,11 @@
 
 ## 7-Zip ZS
 
-- NanaZip.Core: Commit e234d7f29f95c08cb642bcb9616cdb7d45f9862e after
+- NanaZip.Core: Commit 48a3721a41e2ae227c8e4d7814f60f57a6148147 after
   v26.02-v1.5.7-R2.
 - NanaZip.UI.Classic: Unknown because it modifies the old codebase a lot.
 - NanaZip.UI.Modern: Unknown because it modifies the old codebase a lot.
-- NanaZip.Universal: Commit e234d7f29f95c08cb642bcb9616cdb7d45f9862e after
+- NanaZip.Universal: Commit 48a3721a41e2ae227c8e4d7814f60f57a6148147 after
   v26.02-v1.5.7-R2.
 
 ## BLAKE3
@@ -38,7 +38,7 @@
 
 ## FastLZMA2
 
-- NanaZip.Codecs: Commit a793db99fade2957d2453035390f97e573acecb2.
+- NanaZip.Codecs: Commit 967306d39daacf9a14ad923c86fa7f9c4552b59b.
 
 ## FreeBSD
 
@@ -54,7 +54,8 @@
 
 ## Lizard
 
-- NanaZip.Codecs: 2.1 with current used 7-Zip ZS modifications.
+- NanaZip.Codecs: Commit d3becc7e80d3eb01147c2f63bed2e23fac533f19 after v2.1
+  with current used 7-Zip ZS modifications.
 
 ## LZ4
 
@@ -62,7 +63,7 @@
 
 ## LZ5
 
-- NanaZip.Codecs: 1.5
+- NanaZip.Codecs: Commit 1bc0fef363a44444135badb8e34286d5c56e1d5c after v1.5.
 
 ## RHash
 
